@@ -1,0 +1,53 @@
+# Build output
+build/
+out/
+cmake-build-*/
+
+# vcpkg build artifacts
+vcpkg/
+vcpkg_installed/
+
+# Qt Creator
+*.pro.user
+*.qmlproject.user
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.vc.vc.opendb
+*.opensdf
+*.sdf
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.db
+*.opendb
+
+# Compiled / generated
+*.o
+*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Tools (not committed — use scripts/setup_tools.ps1 to populate)
+tools/
+
+# Database files (user data, not source)
+*.db
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+*.swp
+*.swo

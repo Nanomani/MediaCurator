@@ -1,0 +1,30 @@
+# cmake/Packaging.cmake — CPack installer configuration
+
+set(CPACK_PACKAGE_NAME "MediaCurator")
+set(CPACK_PACKAGE_VENDOR "MediaCurator Contributors")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Smart media library curator")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_VERSION_MAJOR "${PROJECT_VERSION_MAJOR}")
+set(CPACK_PACKAGE_VERSION_MINOR "${PROJECT_VERSION_MINOR}")
+set(CPACK_PACKAGE_VERSION_PATCH "${PROJECT_VERSION_PATCH}")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "MediaCurator")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_EXECUTABLES "MediaCurator;MediaCurator")
+
+# Windows — NSIS installer
+if(WIN32)
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_NSIS_DISPLAY_NAME "MediaCurator")
+    set(CPACK_NSIS_PACKAGE_NAME "MediaCurator")
+    set(CPACK_NSIS_MODIFY_PATH ON)
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+elseif(APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "MediaCurator")
+else()
+    set(CPACK_GENERATOR "TGZ;DEB")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "MediaCurator Contributors")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt6widgets6, libqt6sql6, libqt6concurrent6")
+endif()
+
+include(CPack)

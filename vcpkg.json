@@ -1,0 +1,11 @@
+{
+  "name": "mediacurator",
+  "version-string": "0.1.0",
+  "description": "Smart media library curator",
+  "dependencies": [
+    {
+      "name": "nlohmann-json",
+      "version>=": "3.11.0"
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "_comment": "MediaCurator track type classifier rules. Patterns are case-insensitive.",
+  "version": 1,
+  "rules": [
+    {
+      "type": "commentary",
+      "confidence": 0.95,
+      "patterns": [
+        "director.{0,5}comment",
+        "cast.*comment",
+        "comment.*track",
+        "audio.*comment",
+        "kommentar",
+        "director.{0,5}cut.*comment",
+        "production.*notes",
+        "behindthescenes",
+        "making.*of.*track",
+        "\\bDC\\b.*comment"
+      ]
+    },
+    {
+      "type": "sdh",
+      "confidence": 0.95,
+      "patterns": [
+        "\\bSDH\\b",
+        "\\bCC\\b",
+        "\\bHI\\b",
+        "closed.*caption",
+        "hearing.*impair",
+        "h.rgeschädigte",
+        "hörgeschädigte",
+        "hard.*of.*hearing",
+        "deaf",
+        "\\bAD\\b.*subtitle",
+        "accessible"
+      ]
+    },
+    {
+      "type": "forced",
+      "confidence": 0.97,
+      "patterns": [
+        "\\bforced\\b",
+        "forced.*subtitle",
+        "foreign.*parts.*only",
+        "foreign.*only",
+        "signs.*only",
+        "\\bFP\\b"
+      ]
+    },
+    {
+      "type": "signs",
+      "confidence": 0.90,
+      "patterns": [
+        "signs.*songs",
+        "signs.*&.*songs",
+        "songs.*signs",
+        "song.*translation",
+        "text.*only",
+        "on.*screen.*text",
+        "title.*card"
+      ]
+    },
+    {
+      "type": "hearing_impaired",
+      "confidence": 0.92,
+      "patterns": [
+        "hearing.?impaired",
+        "\\bHI\\b",
+        "hard.*of.*hearing",
+        "hörgeschädigte"
+      ]
+    },
+    {
+      "type": "visual_impaired",
+      "confidence": 0.92,
+      "patterns": [
+        "visual.?impaired",
+        "audio.*descrip",
+        "\\bAD\\b",
+        "described.*video",
+        "video.*described",
+        "audiodeskription"
+      ]
+    },
+    {
+      "type": "commentary",
+      "confidence": 0.80,
+      "patterns": [
+        "2\\.0.*ch",
+        "stereo.*track"
+      ],
+      "require_also": {
+        "channels_max": 2
+      }
+    }
+  ]
+}
