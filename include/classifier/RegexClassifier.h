@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "classifier/TrackClassifier.h"
 
 namespace Mc {
@@ -9,12 +9,12 @@ namespace Mc {
  */
 class RegexClassifier : public TrackClassifier {
 public:
-    RegexClassifier();
-    ClassificationResult classify(const QString& title,
-                                   const QString& language,
-                                   const QString& codec) const override;
+	RegexClassifier();
+	ClassificationResult classify(const QString& title,
+								   const QString& language,
+								   const QString& codec) const override;
 private:
-    // Loaded from data/track_classifier.json
-    // See src/classifier/RegexClassifier.cpp for rule format
+	// Loaded from data/track_classifier.json
+	// See src/classifier/RegexClassifier.cpp for rule format
 };
 } // namespace Mc

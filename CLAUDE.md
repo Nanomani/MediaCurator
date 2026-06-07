@@ -16,19 +16,28 @@ Jacob @ Lasernet Group (personal project, not work-related)
 - **Database**: SQLite via Qt's QSqlDatabase
 - **JSON parsing**: nlohmann/json (header-only)
 - **Metadata**: ffprobe (bundled, LGPL build, invoked as subprocess)
-- **File editing**: mkvmerge + mkvpropedit (bundled, GPL, invoked as subprocess)
+- **File editing**: mkvmerge (bundled, GPL, invoked as subprocess)
 - **Track classification**: Regex/keyword baseline; ONNX Runtime optional (future)
 - **IDE**: Visual Studio 2026 (MSVC toolchain, x64)
 - **CI**: GitHub Actions (Windows primary, macOS/Linux secondary)
 
 ## Build Instructions
-```bash
-# Windows (from repo root, using VS Developer PowerShell)
-cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake
-cmake --build build --config Release
+```powershell
+# Windows — uses CMakePresets.json + CMakeUserPresets.json (local, not committed)
+cmake --preset local-release
+cmake --build --preset local-release
 
 # Or open build/MediaCurator.sln directly in Visual Studio 2026
 ```
+
+> `CMakeUserPresets.json` is gitignored. Copy the template below and adjust paths if
+> your environment differs.
+>
+> ```json
+> { "version": 6, "configurePresets": [{ "name": "local-debug", "inherits": "debug",
+>   "environment": { "VCPKG_ROOT": "<path>/vcpkg",
+>     "Qt6_DIR": "<path>/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6" } }] }
+> ```
 
 ## Project Structure
 ```
@@ -85,8 +94,8 @@ See `src/core/DatabaseManager.cpp` for the full schema. Key tables:
 - `jobs` — pending/completed mkvmerge jobs
 
 ## Environment Requirements
-- Qt 6.7+ (set `Qt6_DIR` in CMake or via Qt Maintenance Tool)
-- MSVC 2022 v17+ (shipped with Visual Studio 2026)
+- Qt 6.8.3 LTS (`msvc2022_64`) — installed at `D:\Development\Environment\Qt\6.8.3`
+- MSVC v18 (shipped with Visual Studio 2026)
 - CMake 3.25+
-- vcpkg (bootstrapped as git submodule at `vcpkg/`)
+- vcpkg standalone at `D:\Development\vcpkg` (not a submodule)
 - ffprobe.exe and mkvmerge.exe placed in `tools/` after first build (see scripts/setup_tools.ps1)

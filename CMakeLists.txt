@@ -30,8 +30,9 @@ endif()
 if(MSVC)
     add_compile_options(/W4 /WX- /utf-8 /MP)
     add_compile_definitions(_UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    # Enable parallel compilation
-    add_compile_options(/MP)
+    # Treat angle-bracket includes (Qt, STL, vcpkg) as external so MSVC
+    # Code Analysis does not flag issues inside third-party headers.
+    add_compile_options(/external:anglebrackets /external:W0)
 endif()
 
 # ── Find Qt6 ──────────────────────────────────────────────────────────────────
@@ -43,6 +44,8 @@ find_package(Qt6 REQUIRED COMPONENTS
     Widgets
     Sql
     Concurrent
+    Network
+    Svg
 )
 
 qt_standard_project_setup()

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <radialGradient id="ring" cx="38%" cy="32%" r="66%">
+      <stop offset="0%" stop-color="#EDB96A"/>
+      <stop offset="100%" stop-color="#BB7820"/>
+    </radialGradient>
+  </defs>
+  <!-- Outer gradient ring -->
+  <circle cx="16" cy="16" r="15.5" fill="url(#ring)"/>
+  <!-- Inner flat circle -->
+  <circle cx="16" cy="16" r="14" fill="#D09040"/>
+  <!-- White play triangle — left edge at 35%, right tip at 75%, vertically centred -->
+  <polygon points="11.5,9.5 23.5,16 11.5,22.5" fill="white"/>
+</svg>

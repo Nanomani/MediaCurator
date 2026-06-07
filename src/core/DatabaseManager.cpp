@@ -1,11 +1,16 @@
-#include "core/DatabaseManager.h"
+﻿#include "core/DatabaseManager.h"
 
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
 #include <QDir>
 #include <QDateTime>
 #include <QDebug>
+#include <QMutexLocker>
+#include <QThread>
 #include <QVariant>
 
 namespace Mc {
@@ -14,495 +19,956 @@ namespace Mc {
 
 DatabaseManager& DatabaseManager::instance()
 {
-    static DatabaseManager s_instance;
-    return s_instance;
+	static DatabaseManager s_instance;
+	return s_instance;
 }
 
 DatabaseManager::DatabaseManager(QObject* parent)
-    : QObject(parent)
+	: QObject(parent)
 {}
 
 DatabaseManager::~DatabaseManager()
 {
-    close();
+	close();
 }
 
 // ── Open / Close ──────────────────────────────────────────────────────────────
 
 bool DatabaseManager::open(const QString& dbPath)
 {
-    if (m_db.isOpen())
-        return true;
+	if (m_db.isOpen())
+		return true;
 
-    if (dbPath.isEmpty()) {
-        const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QDir().mkpath(dataDir);
-        m_dbPath = dataDir + "/mediacurator.db";
-    } else {
-        m_dbPath = dbPath;
-    }
+	if (dbPath.isEmpty()) {
+		const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+		QDir().mkpath(dataDir);
+		m_dbPath = dataDir + "/mediacurator.db";
+	} else {
+		m_dbPath = dbPath;
+	}
 
-    m_db = QSqlDatabase::addDatabase("QSQLITE", "mc_main");
-    m_db.setDatabaseName(m_dbPath);
+	m_mainThreadId = QThread::currentThreadId();
 
-    if (!m_db.open()) {
-        qCritical() << "DatabaseManager: failed to open database:" << m_db.lastError().text();
-        return false;
-    }
+	m_db = QSqlDatabase::addDatabase("QSQLITE", "mc_main");
+	m_db.setDatabaseName(m_dbPath);
 
-    // Enable WAL mode and foreign keys
-    QSqlQuery pragma(m_db);
-    pragma.exec("PRAGMA journal_mode=WAL");
-    pragma.exec("PRAGMA foreign_keys=ON");
-    pragma.exec("PRAGMA synchronous=NORMAL");
+	if (!m_db.open()) {
+		qCritical() << "DatabaseManager: failed to open database:" << m_db.lastError().text();
+		return false;
+	}
 
-    if (!initSchema()) {
-        qCritical() << "DatabaseManager: schema init failed";
-        return false;
-    }
+	// Enable WAL mode and foreign keys
+	QSqlQuery pragma(connection());
+	pragma.exec("PRAGMA journal_mode=WAL");
+	pragma.exec("PRAGMA foreign_keys=ON");
+	pragma.exec("PRAGMA synchronous=NORMAL");
 
-    emit databaseOpened();
-    return true;
+	if (!initSchema()) {
+		qCritical() << "DatabaseManager: schema init failed";
+		return false;
+	}
+
+	emit databaseOpened();
+	return true;
 }
 
 void DatabaseManager::close()
 {
-    if (m_db.isOpen())
-        m_db.close();
+	if (m_db.isOpen())
+		m_db.close();
 }
 
 bool DatabaseManager::isOpen() const
 {
-    return m_db.isOpen();
+	return m_db.isOpen();
+}
+
+QSqlDatabase DatabaseManager::connection() const
+{
+	if (QThread::currentThreadId() == m_mainThreadId)
+		return m_db;
+
+	// Worker thread — create a named connection the first time, reuse thereafter.
+	const QString name = QStringLiteral("mc_thread_%1")
+						 .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
+
+	QMutexLocker lock(&m_connMutex);
+	if (!QSqlDatabase::contains(name)) {
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", name);
+		db.setDatabaseName(m_dbPath);
+		if (!db.open()) {
+			qWarning() << "DatabaseManager: failed to open worker thread connection:" << db.lastError().text();
+			return m_db;   // unsafe fallback — log loudly so it's noticed
+		}
+		QSqlQuery q(db);
+		q.exec("PRAGMA journal_mode=WAL");
+		q.exec("PRAGMA synchronous=NORMAL");
+		q.exec("PRAGMA foreign_keys=ON");
+	}
+	return QSqlDatabase::database(name, false);
 }
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 bool DatabaseManager::initSchema()
 {
-    static const char* schema = R"(
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER NOT NULL
-        );
+	static const char* schema = R"(
+		CREATE TABLE IF NOT EXISTS schema_version (
+			version INTEGER NOT NULL
+		);
 
-        CREATE TABLE IF NOT EXISTS scan_runs (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            start_time     INTEGER NOT NULL,
-            end_time       INTEGER,
-            root_path      TEXT NOT NULL,
-            files_scanned  INTEGER DEFAULT 0,
-            files_added    INTEGER DEFAULT 0,
-            files_updated  INTEGER DEFAULT 0,
-            files_removed  INTEGER DEFAULT 0
-        );
+		CREATE TABLE IF NOT EXISTS scan_runs (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			start_time     INTEGER NOT NULL,
+			end_time       INTEGER,
+			root_path      TEXT NOT NULL,
+			files_scanned  INTEGER DEFAULT 0,
+			files_added    INTEGER DEFAULT 0,
+			files_updated  INTEGER DEFAULT 0,
+			files_removed  INTEGER DEFAULT 0
+		);
 
-        CREATE TABLE IF NOT EXISTS files (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-            path              TEXT UNIQUE NOT NULL,
-            filename          TEXT NOT NULL,
-            size_bytes        INTEGER NOT NULL DEFAULT 0,
-            container         TEXT,
-            duration_s        REAL DEFAULT 0,
-            overall_bitrate   INTEGER DEFAULT 0,
-            original_language TEXT,
-            scan_time         INTEGER NOT NULL DEFAULT 0,
-            scan_run_id       INTEGER REFERENCES scan_runs(id),
-            needs_rescan      INTEGER DEFAULT 0
-        );
+		CREATE TABLE IF NOT EXISTS files (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			path              TEXT UNIQUE NOT NULL,
+			filename          TEXT NOT NULL,
+			size_bytes        INTEGER NOT NULL DEFAULT 0,
+			container         TEXT,
+			duration_s        REAL DEFAULT 0,
+			overall_bitrate   INTEGER DEFAULT 0,
+			original_language TEXT,
+			scan_time         INTEGER NOT NULL DEFAULT 0,
+			scan_run_id       INTEGER REFERENCES scan_runs(id),
+			needs_rescan      INTEGER DEFAULT 0
+		);
 
-        CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
+		CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 
-        CREATE TABLE IF NOT EXISTS streams (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id             INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-            stream_index        INTEGER NOT NULL,
-            codec_type          TEXT NOT NULL,
-            codec_name          TEXT,
-            language            TEXT,
-            title               TEXT,
-            track_type          TEXT DEFAULT 'main',
-            type_confidence     REAL DEFAULT 0,
-            channels            INTEGER DEFAULT 0,
-            sample_rate         INTEGER DEFAULT 0,
-            bit_rate            INTEGER DEFAULT 0,
-            width               INTEGER DEFAULT 0,
-            height              INTEGER DEFAULT 0,
-            hdr_format          TEXT,
-            is_default          INTEGER DEFAULT 0,
-            is_forced           INTEGER DEFAULT 0,
-            is_hearing_impaired INTEGER DEFAULT 0,
-            is_visual_impaired  INTEGER DEFAULT 0,
-            pixel_format        TEXT,
-            frame_rate          TEXT,
-            codec_level         TEXT,
-            codec_profile       TEXT,
-            extra_json          TEXT
-        );
+		CREATE TABLE IF NOT EXISTS streams (
+			id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+			file_id             INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+			stream_index        INTEGER NOT NULL,
+			codec_type          TEXT NOT NULL,
+			codec_name          TEXT,
+			language            TEXT,
+			title               TEXT,
+			track_type          TEXT DEFAULT 'main',
+			type_confidence     REAL DEFAULT 0,
+			channels            INTEGER DEFAULT 0,
+			sample_rate         INTEGER DEFAULT 0,
+			bit_rate            INTEGER DEFAULT 0,
+			width               INTEGER DEFAULT 0,
+			height              INTEGER DEFAULT 0,
+			hdr_format          TEXT,
+			is_default          INTEGER DEFAULT 0,
+			is_forced           INTEGER DEFAULT 0,
+			is_hearing_impaired INTEGER DEFAULT 0,
+			is_visual_impaired  INTEGER DEFAULT 0,
+			pixel_format        TEXT,
+			frame_rate          TEXT,
+			codec_level         TEXT,
+			codec_profile       TEXT,
+			extra_json          TEXT
+		);
 
-        CREATE INDEX IF NOT EXISTS idx_streams_file_id ON streams(file_id);
+		CREATE INDEX IF NOT EXISTS idx_streams_file_id ON streams(file_id);
 
-        CREATE TABLE IF NOT EXISTS jobs (
-            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_id                 INTEGER REFERENCES files(id),
-            status                  TEXT DEFAULT 'pending',
-            job_type                TEXT NOT NULL,
-            command_args_json       TEXT NOT NULL DEFAULT '[]',
-            dry_run                 INTEGER DEFAULT 1,
-            created_at              INTEGER NOT NULL DEFAULT 0,
-            started_at              INTEGER DEFAULT 0,
-            finished_at             INTEGER DEFAULT 0,
-            result_code             INTEGER DEFAULT -1,
-            output_log              TEXT,
-            estimated_saving_bytes  INTEGER DEFAULT 0
-        );
+		CREATE TABLE IF NOT EXISTS jobs (
+			id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+			file_id                 INTEGER REFERENCES files(id),
+			status                  TEXT DEFAULT 'queued',
+			job_type                TEXT NOT NULL,
+			command_args_json       TEXT NOT NULL DEFAULT '[]',
+			dry_run                 INTEGER DEFAULT 1,
+			created_at              INTEGER NOT NULL DEFAULT 0,
+			started_at              INTEGER DEFAULT 0,
+			finished_at             INTEGER DEFAULT 0,
+			result_code             INTEGER DEFAULT -1,
+			output_log              TEXT,
+			estimated_saving_bytes  INTEGER DEFAULT 0
+		);
 
-        CREATE TABLE IF NOT EXISTS preferences (
-            key    TEXT PRIMARY KEY,
-            value  TEXT
-        );
+		CREATE TABLE IF NOT EXISTS preferences (
+			key    TEXT PRIMARY KEY,
+			value  TEXT
+		);
 
-        CREATE TABLE IF NOT EXISTS codec_hierarchy (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            lossless_codec TEXT NOT NULL,
-            lossy_codec    TEXT NOT NULL,
-            notes          TEXT,
-            UNIQUE(lossless_codec, lossy_codec)
-        );
-    )";
+		CREATE TABLE IF NOT EXISTS codec_hierarchy (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			lossless_codec TEXT NOT NULL,
+			lossy_codec    TEXT NOT NULL,
+			notes          TEXT,
+			UNIQUE(lossless_codec, lossy_codec)
+		);
 
-    // Execute each statement separated by semicolons
-    const QStringList statements = QString::fromUtf8(schema).split(';', Qt::SkipEmptyParts);
-    for (const QString& stmt : statements) {
-        const QString trimmed = stmt.trimmed();
-        if (trimmed.isEmpty()) continue;
-        QSqlQuery q(m_db);
-        if (!q.exec(trimmed)) {
-            qWarning() << "Schema statement failed:" << q.lastError().text() << "\n" << trimmed;
-            return false;
-        }
-    }
+		CREATE TABLE IF NOT EXISTS poster_cache (
+			file_id    INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+			source     TEXT NOT NULL DEFAULT '',
+			status     TEXT NOT NULL DEFAULT 'pending',
+			image_path TEXT NOT NULL DEFAULT '',
+			imdb_id    TEXT NOT NULL DEFAULT '',
+			fetched_at INTEGER NOT NULL DEFAULT 0
+		);
+	)";
 
-    // Seed codec hierarchy if empty
-    QSqlQuery check(m_db);
-    check.exec("SELECT COUNT(*) FROM codec_hierarchy");
-    if (check.next() && check.value(0).toInt() == 0) {
-        const QList<QPair<QString,QString>> pairs = {
-            {"truehd",  "eac3"},
-            {"truehd",  "ac3"},
-            {"dtshd_ma","dts"},
-            {"flac",    "aac"},
-            {"flac",    "mp3"},
-            {"pcm_s16le","aac"},
-            {"pcm_s24le","aac"},
-            {"pcm_s32le","aac"},
-        };
-        QSqlQuery ins(m_db);
-        ins.prepare("INSERT OR IGNORE INTO codec_hierarchy(lossless_codec,lossy_codec) VALUES(?,?)");
-        for (const auto& [lossless, lossy] : pairs) {
-            ins.addBindValue(lossless);
-            ins.addBindValue(lossy);
-            ins.exec();
-        }
-    }
+	// Execute each statement separated by semicolons
+	const QStringList statements = QString::fromUtf8(schema).split(';', Qt::SkipEmptyParts);
+	for (const QString& stmt : statements) {
+		const QString trimmed = stmt.trimmed();
+		if (trimmed.isEmpty()) continue;
+		QSqlQuery q(connection());
+		if (!q.exec(trimmed)) {
+			qWarning() << "Schema statement failed:" << q.lastError().text() << "\n" << trimmed;
+			return false;
+		}
+	}
 
-    return true;
+	// Seed codec hierarchy if empty
+	QSqlQuery check(connection());
+	check.exec("SELECT COUNT(*) FROM codec_hierarchy");
+	if (check.next() && check.value(0).toInt() == 0) {
+		const QList<QPair<QString,QString>> pairs = {
+			{"truehd",  "eac3"},
+			{"truehd",  "ac3"},
+			{"dtshd_ma","dts"},
+			{"flac",    "aac"},
+			{"flac",    "mp3"},
+			{"pcm_s16le","aac"},
+			{"pcm_s24le","aac"},
+			{"pcm_s32le","aac"},
+		};
+		QSqlQuery ins(connection());
+		ins.prepare("INSERT OR IGNORE INTO codec_hierarchy(lossless_codec,lossy_codec) VALUES(?,?)");
+		for (const auto& [lossless, lossy] : pairs) {
+			ins.addBindValue(lossless);
+			ins.addBindValue(lossy);
+			ins.exec();
+		}
+	}
+
+	// Migration: add columns that didn't exist in the initial schema
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE jobs ADD COLUMN summary TEXT DEFAULT ''");
+		m.exec("ALTER TABLE jobs ADD COLUMN saved_bytes INTEGER DEFAULT 0");
+		m.exec("ALTER TABLE files ADD COLUMN mtime_ms INTEGER DEFAULT 0");
+		m.exec("ALTER TABLE jobs ADD COLUMN description_text TEXT DEFAULT ''");
+		m.exec("ALTER TABLE jobs ADD COLUMN original_streams_json TEXT DEFAULT ''");
+		// Ignore errors — they just mean the column already exists
+	}
+
+	// Migration: rename job status 'pending' → 'queued' to match UI terminology
+	{
+		QSqlQuery m(connection());
+		m.exec("UPDATE jobs SET status='queued' WHERE status='pending'");
+	}
+
+	// One-time migration: reset 'no_poster' records to 'pending' so that newly
+	// bundled tools (ffmpeg, mkvextract) get a chance to extract embedded art.
+	// Uses a preferences key so this only runs once per installation upgrade.
+	{
+		QSqlQuery pv(connection());
+		pv.exec("SELECT value FROM preferences WHERE key='poster_scan_version'");
+		const QString currentVersion = pv.next() ? pv.value(0).toString() : "";
+		if (currentVersion != "2") {
+			QSqlQuery reset(connection());
+			reset.exec("UPDATE poster_cache SET status='pending',source='',image_path='' WHERE status='no_poster'");
+			QSqlQuery setv(connection());
+			setv.prepare("INSERT OR REPLACE INTO preferences(key,value) VALUES('poster_scan_version','2')");
+			setv.exec();
+		}
+	}
+
+	return true;
 }
 
 // ── Scan runs ─────────────────────────────────────────────────────────────────
 
 qint64 DatabaseManager::beginScanRun(const QString& rootPath)
 {
-    QSqlQuery q(m_db);
-    q.prepare("INSERT INTO scan_runs(start_time, root_path) VALUES(?, ?)");
-    q.addBindValue(QDateTime::currentSecsSinceEpoch());
-    q.addBindValue(rootPath);
-    if (!q.exec()) {
-        qWarning() << "beginScanRun failed:" << q.lastError().text();
-        return -1;
-    }
-    return q.lastInsertId().toLongLong();
+	QSqlQuery q(connection());
+	q.prepare("INSERT INTO scan_runs(start_time, root_path) VALUES(?, ?)");
+	q.addBindValue(QDateTime::currentSecsSinceEpoch());
+	q.addBindValue(rootPath);
+	if (!q.exec()) {
+		qWarning() << "beginScanRun failed:" << q.lastError().text();
+		return -1;
+	}
+	return q.lastInsertId().toLongLong();
 }
 
 void DatabaseManager::endScanRun(qint64 scanRunId, int added, int updated, int removed)
 {
-    QSqlQuery q(m_db);
-    q.prepare("UPDATE scan_runs SET end_time=?, files_added=?, files_updated=?, files_removed=? WHERE id=?");
-    q.addBindValue(QDateTime::currentSecsSinceEpoch());
-    q.addBindValue(added);
-    q.addBindValue(updated);
-    q.addBindValue(removed);
-    q.addBindValue(scanRunId);
-    q.exec();
+	QSqlQuery q(connection());
+	q.prepare("UPDATE scan_runs SET end_time=?, files_added=?, files_updated=?, files_removed=? WHERE id=?");
+	q.addBindValue(QDateTime::currentSecsSinceEpoch());
+	q.addBindValue(added);
+	q.addBindValue(updated);
+	q.addBindValue(removed);
+	q.addBindValue(scanRunId);
+	q.exec();
 }
 
 // ── Files ─────────────────────────────────────────────────────────────────────
 
 std::optional<qint64> DatabaseManager::upsertFile(const FileRecord& rec)
 {
-    QSqlQuery q(m_db);
-    q.prepare(R"(
-        INSERT INTO files(path, filename, size_bytes, container, duration_s,
-                          overall_bitrate, original_language, scan_time, scan_run_id, needs_rescan)
-        VALUES(?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(path) DO UPDATE SET
-            filename=excluded.filename,
-            size_bytes=excluded.size_bytes,
-            container=excluded.container,
-            duration_s=excluded.duration_s,
-            overall_bitrate=excluded.overall_bitrate,
-            original_language=excluded.original_language,
-            scan_time=excluded.scan_time,
-            scan_run_id=excluded.scan_run_id,
-            needs_rescan=excluded.needs_rescan
-    )");
-    q.addBindValue(rec.path);
-    q.addBindValue(rec.filename);
-    q.addBindValue(rec.sizeBytes);
-    q.addBindValue(rec.container);
-    q.addBindValue(rec.durationSec);
-    q.addBindValue(rec.overallBitrate);
-    q.addBindValue(rec.originalLanguage);
-    q.addBindValue(rec.scanTime);
-    q.addBindValue(rec.scanRunId > 0 ? QVariant(rec.scanRunId) : QVariant());
-    q.addBindValue(rec.needsRescan ? 1 : 0);
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO files(path, filename, size_bytes, mtime_ms, container, duration_s,
+						  overall_bitrate, original_language, scan_time, scan_run_id, needs_rescan)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(path) DO UPDATE SET
+			filename=excluded.filename,
+			size_bytes=excluded.size_bytes,
+			mtime_ms=excluded.mtime_ms,
+			container=excluded.container,
+			duration_s=excluded.duration_s,
+			overall_bitrate=excluded.overall_bitrate,
+			original_language=excluded.original_language,
+			scan_time=excluded.scan_time,
+			scan_run_id=excluded.scan_run_id,
+			needs_rescan=excluded.needs_rescan
+	)");
+	q.addBindValue(rec.path);
+	q.addBindValue(rec.filename);
+	q.addBindValue(rec.sizeBytes);
+	q.addBindValue(rec.mtimeMs);
+	q.addBindValue(rec.container);
+	q.addBindValue(rec.durationSec);
+	q.addBindValue(rec.overallBitrate);
+	q.addBindValue(rec.originalLanguage);
+	q.addBindValue(rec.scanTime);
+	q.addBindValue(rec.scanRunId > 0 ? QVariant(rec.scanRunId) : QVariant());
+	q.addBindValue(rec.needsRescan ? 1 : 0);
 
-    if (!q.exec()) {
-        qWarning() << "upsertFile failed:" << q.lastError().text();
-        return std::nullopt;
-    }
+	if (!q.exec()) {
+		qWarning() << "upsertFile failed:" << q.lastError().text();
+		return std::nullopt;
+	}
 
-    // Return the rowid — for upsert, lastInsertId returns the row id
-    const qint64 insertedId = q.lastInsertId().toLongLong();
-    if (insertedId > 0)
-        return insertedId;
+	// INSERT returns a new rowid; UPDATE returns 0 for lastInsertId
+	const qint64 insertedId = q.lastInsertId().toLongLong();
+	if (insertedId > 0) {
+		emit fileAdded(insertedId);
+		return insertedId;
+	}
 
-    // Was an update — fetch the existing id
-    QSqlQuery sel(m_db);
-    sel.prepare("SELECT id FROM files WHERE path=?");
-    sel.addBindValue(rec.path);
-    if (sel.exec() && sel.next())
-        return sel.value(0).toLongLong();
+	// Was an update — fetch the existing id
+	QSqlQuery sel(connection());
+	sel.prepare("SELECT id FROM files WHERE path=?");
+	sel.addBindValue(rec.path);
+	if (sel.exec() && sel.next()) {
+		const qint64 existingId = sel.value(0).toLongLong();
+		emit fileUpdated(existingId);
+		return existingId;
+	}
 
-    return std::nullopt;
+	return std::nullopt;
+}
+
+std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
+{
+	QSqlQuery q(connection());
+	q.prepare("SELECT * FROM files WHERE id=?");
+	q.addBindValue(id);
+	if (!q.exec() || !q.next())
+		return std::nullopt;
+
+	FileRecord r;
+	r.id               = q.value("id").toLongLong();
+	r.path             = q.value("path").toString();
+	r.filename         = q.value("filename").toString();
+	r.sizeBytes        = q.value("size_bytes").toLongLong();
+	r.mtimeMs          = q.value("mtime_ms").toLongLong();
+	r.container        = q.value("container").toString();
+	r.durationSec      = q.value("duration_s").toDouble();
+	r.overallBitrate   = q.value("overall_bitrate").toLongLong();
+	r.originalLanguage = q.value("original_language").toString();
+	r.scanTime         = q.value("scan_time").toLongLong();
+	r.scanRunId        = q.value("scan_run_id").toLongLong();
+	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+	return r;
 }
 
 std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 {
-    QSqlQuery q(m_db);
-    q.prepare("SELECT * FROM files WHERE path=?");
-    q.addBindValue(path);
-    if (!q.exec() || !q.next())
-        return std::nullopt;
+	QSqlQuery q(connection());
+	q.prepare("SELECT * FROM files WHERE path=?");
+	q.addBindValue(path);
+	if (!q.exec() || !q.next())
+		return std::nullopt;
 
-    FileRecord r;
-    r.id               = q.value("id").toLongLong();
-    r.path             = q.value("path").toString();
-    r.filename         = q.value("filename").toString();
-    r.sizeBytes        = q.value("size_bytes").toLongLong();
-    r.container        = q.value("container").toString();
-    r.durationSec      = q.value("duration_s").toDouble();
-    r.overallBitrate   = q.value("overall_bitrate").toLongLong();
-    r.originalLanguage = q.value("original_language").toString();
-    r.scanTime         = q.value("scan_time").toLongLong();
-    r.needsRescan      = q.value("needs_rescan").toInt() != 0;
-    return r;
+	FileRecord r;
+	r.id               = q.value("id").toLongLong();
+	r.path             = q.value("path").toString();
+	r.filename         = q.value("filename").toString();
+	r.sizeBytes        = q.value("size_bytes").toLongLong();
+	r.mtimeMs          = q.value("mtime_ms").toLongLong();
+	r.container        = q.value("container").toString();
+	r.durationSec      = q.value("duration_s").toDouble();
+	r.overallBitrate   = q.value("overall_bitrate").toLongLong();
+	r.originalLanguage = q.value("original_language").toString();
+	r.scanTime         = q.value("scan_time").toLongLong();
+	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+	return r;
 }
 
 QList<FileRecord> DatabaseManager::allFiles() const
 {
-    QList<FileRecord> result;
-    QSqlQuery q("SELECT * FROM files ORDER BY filename", m_db);
-    while (q.next()) {
-        FileRecord r;
-        r.id               = q.value("id").toLongLong();
-        r.path             = q.value("path").toString();
-        r.filename         = q.value("filename").toString();
-        r.sizeBytes        = q.value("size_bytes").toLongLong();
-        r.container        = q.value("container").toString();
-        r.durationSec      = q.value("duration_s").toDouble();
-        r.overallBitrate   = q.value("overall_bitrate").toLongLong();
-        r.originalLanguage = q.value("original_language").toString();
-        r.scanTime         = q.value("scan_time").toLongLong();
-        r.needsRescan      = q.value("needs_rescan").toInt() != 0;
-        result.append(r);
-    }
-    return result;
+	QList<FileRecord> result;
+	QSqlQuery q("SELECT * FROM files ORDER BY filename", m_db);
+	while (q.next()) {
+		FileRecord r;
+		r.id               = q.value("id").toLongLong();
+		r.path             = q.value("path").toString();
+		r.filename         = q.value("filename").toString();
+		r.sizeBytes        = q.value("size_bytes").toLongLong();
+		r.mtimeMs          = q.value("mtime_ms").toLongLong();
+		r.container        = q.value("container").toString();
+		r.durationSec      = q.value("duration_s").toDouble();
+		r.overallBitrate   = q.value("overall_bitrate").toLongLong();
+		r.originalLanguage = q.value("original_language").toString();
+		r.scanTime         = q.value("scan_time").toLongLong();
+		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+		result.append(r);
+	}
+	return result;
+}
+
+QList<FileRecord> DatabaseManager::filesUnderPath(const QString& rootPath) const
+{
+	QList<FileRecord> result;
+	QSqlQuery q(connection());
+	const QString prefix = (rootPath.endsWith('/') ? rootPath : rootPath + '/') + '%';
+	q.prepare("SELECT id, path FROM files WHERE path LIKE ?");
+	q.addBindValue(prefix);
+	if (!q.exec()) return result;
+	while (q.next()) {
+		FileRecord r;
+		r.id   = q.value("id").toLongLong();
+		r.path = q.value("path").toString();
+		result.append(r);
+	}
+	return result;
+}
+
+int DatabaseManager::fileCountUnderPath(const QString& rootPath) const
+{
+	QSqlQuery q(connection());
+	const QString prefix = (rootPath.endsWith('/') ? rootPath : rootPath + '/') + '%';
+	q.prepare("SELECT COUNT(*) FROM files WHERE path LIKE ?");
+	q.addBindValue(prefix);
+	if (q.exec() && q.next())
+		return q.value(0).toInt();
+	return 0;
+}
+
+int DatabaseManager::removeFilesUnderPath(const QString& rootPath)
+{
+	QSqlQuery q(connection());
+	const QString prefix = (rootPath.endsWith('/') ? rootPath : rootPath + '/') + '%';
+	q.prepare("DELETE FROM files WHERE path LIKE ?");
+	q.addBindValue(prefix);
+	if (!q.exec()) return 0;
+	return q.numRowsAffected();
 }
 
 bool DatabaseManager::deleteFile(qint64 fileId)
 {
-    QSqlQuery q(m_db);
-    q.prepare("DELETE FROM files WHERE id=?");
-    q.addBindValue(fileId);
-    const bool ok = q.exec();
-    if (ok)
-        emit fileDeleted(fileId);
-    return ok;
+	QSqlQuery q(connection());
+	q.prepare("DELETE FROM files WHERE id=?");
+	q.addBindValue(fileId);
+	const bool ok = q.exec();
+	if (ok)
+		emit fileDeleted(fileId);
+	return ok;
 }
 
 // ── Streams ───────────────────────────────────────────────────────────────────
 
 bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& streams)
 {
-    if (!deleteStreamsForFile(fileId))
-        return false;
+	if (!deleteStreamsForFile(fileId))
+		return false;
 
-    QSqlQuery q(m_db);
-    q.prepare(R"(
-        INSERT INTO streams(file_id, stream_index, codec_type, codec_name, language, title,
-            track_type, type_confidence, channels, sample_rate, bit_rate, width, height,
-            hdr_format, is_default, is_forced, is_hearing_impaired, is_visual_impaired,
-            pixel_format, frame_rate, codec_level, codec_profile, extra_json)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    )");
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO streams(file_id, stream_index, codec_type, codec_name, language, title,
+			track_type, type_confidence, channels, sample_rate, bit_rate, width, height,
+			hdr_format, is_default, is_forced, is_hearing_impaired, is_visual_impaired,
+			pixel_format, frame_rate, codec_level, codec_profile, extra_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	)");
 
-    m_db.transaction();
-    for (const auto& s : streams) {
-        q.addBindValue(fileId);
-        q.addBindValue(s.streamIndex);
-        q.addBindValue(s.codecType);
-        q.addBindValue(s.codecName);
-        q.addBindValue(s.language);
-        q.addBindValue(s.title);
-        q.addBindValue(s.trackType);
-        q.addBindValue(s.typeConfidence);
-        q.addBindValue(s.channels);
-        q.addBindValue(s.sampleRate);
-        q.addBindValue(s.bitRate);
-        q.addBindValue(s.width);
-        q.addBindValue(s.height);
-        q.addBindValue(s.hdrFormat);
-        q.addBindValue(s.isDefault ? 1 : 0);
-        q.addBindValue(s.isForced ? 1 : 0);
-        q.addBindValue(s.isHearingImpaired ? 1 : 0);
-        q.addBindValue(s.isVisualImpaired ? 1 : 0);
-        q.addBindValue(s.pixelFormat);
-        q.addBindValue(s.frameRate);
-        q.addBindValue(s.codecLevel);
-        q.addBindValue(s.codecProfile);
-        q.addBindValue(s.extraJson);
-        if (!q.exec()) {
-            qWarning() << "insertStreams row failed:" << q.lastError().text();
-            m_db.rollback();
-            return false;
-        }
-    }
-    m_db.commit();
-    return true;
+	connection().transaction();
+	for (const auto& s : streams) {
+		q.addBindValue(fileId);
+		q.addBindValue(s.streamIndex);
+		q.addBindValue(s.codecType);
+		q.addBindValue(s.codecName);
+		q.addBindValue(s.language);
+		q.addBindValue(s.title);
+		q.addBindValue(s.trackType);
+		q.addBindValue(s.typeConfidence);
+		q.addBindValue(s.channels);
+		q.addBindValue(s.sampleRate);
+		q.addBindValue(s.bitRate);
+		q.addBindValue(s.width);
+		q.addBindValue(s.height);
+		q.addBindValue(s.hdrFormat);
+		q.addBindValue(s.isDefault ? 1 : 0);
+		q.addBindValue(s.isForced ? 1 : 0);
+		q.addBindValue(s.isHearingImpaired ? 1 : 0);
+		q.addBindValue(s.isVisualImpaired ? 1 : 0);
+		q.addBindValue(s.pixelFormat);
+		q.addBindValue(s.frameRate);
+		q.addBindValue(s.codecLevel);
+		q.addBindValue(s.codecProfile);
+		q.addBindValue(s.extraJson);
+		if (!q.exec()) {
+			qWarning() << "insertStreams row failed:" << q.lastError().text();
+			connection().rollback();
+			return false;
+		}
+	}
+	connection().commit();
+	return true;
 }
 
 bool DatabaseManager::deleteStreamsForFile(qint64 fileId)
 {
-    QSqlQuery q(m_db);
-    q.prepare("DELETE FROM streams WHERE file_id=?");
-    q.addBindValue(fileId);
-    return q.exec();
+	QSqlQuery q(connection());
+	q.prepare("DELETE FROM streams WHERE file_id=?");
+	q.addBindValue(fileId);
+	return q.exec();
 }
 
 QList<StreamRecord> DatabaseManager::streamsForFile(qint64 fileId) const
 {
-    QList<StreamRecord> result;
-    QSqlQuery q(m_db);
-    q.prepare("SELECT * FROM streams WHERE file_id=? ORDER BY stream_index");
-    q.addBindValue(fileId);
-    if (!q.exec()) return result;
+	QList<StreamRecord> result;
+	QSqlQuery q(connection());
+	q.prepare("SELECT * FROM streams WHERE file_id=? ORDER BY stream_index");
+	q.addBindValue(fileId);
+	if (!q.exec()) return result;
 
-    while (q.next()) {
-        StreamRecord s;
-        s.id                = q.value("id").toLongLong();
-        s.fileId            = q.value("file_id").toLongLong();
-        s.streamIndex       = q.value("stream_index").toInt();
-        s.codecType         = q.value("codec_type").toString();
-        s.codecName         = q.value("codec_name").toString();
-        s.language          = q.value("language").toString();
-        s.title             = q.value("title").toString();
-        s.trackType         = q.value("track_type").toString();
-        s.typeConfidence    = q.value("type_confidence").toDouble();
-        s.channels          = q.value("channels").toInt();
-        s.sampleRate        = q.value("sample_rate").toInt();
-        s.bitRate           = q.value("bit_rate").toLongLong();
-        s.width             = q.value("width").toInt();
-        s.height            = q.value("height").toInt();
-        s.hdrFormat         = q.value("hdr_format").toString();
-        s.isDefault         = q.value("is_default").toInt() != 0;
-        s.isForced          = q.value("is_forced").toInt() != 0;
-        s.isHearingImpaired = q.value("is_hearing_impaired").toInt() != 0;
-        s.isVisualImpaired  = q.value("is_visual_impaired").toInt() != 0;
-        s.pixelFormat       = q.value("pixel_format").toString();
-        s.frameRate         = q.value("frame_rate").toString();
-        s.codecLevel        = q.value("codec_level").toString();
-        s.codecProfile      = q.value("codec_profile").toString();
-        s.extraJson         = q.value("extra_json").toString();
-        result.append(s);
-    }
-    return result;
+	while (q.next()) {
+		StreamRecord s;
+		s.id                = q.value("id").toLongLong();
+		s.fileId            = q.value("file_id").toLongLong();
+		s.streamIndex       = q.value("stream_index").toInt();
+		s.codecType         = q.value("codec_type").toString();
+		s.codecName         = q.value("codec_name").toString();
+		s.language          = q.value("language").toString();
+		s.title             = q.value("title").toString();
+		s.trackType         = q.value("track_type").toString();
+		s.typeConfidence    = q.value("type_confidence").toDouble();
+		s.channels          = q.value("channels").toInt();
+		s.sampleRate        = q.value("sample_rate").toInt();
+		s.bitRate           = q.value("bit_rate").toLongLong();
+		s.width             = q.value("width").toInt();
+		s.height            = q.value("height").toInt();
+		s.hdrFormat         = q.value("hdr_format").toString();
+		s.isDefault         = q.value("is_default").toInt() != 0;
+		s.isForced          = q.value("is_forced").toInt() != 0;
+		s.isHearingImpaired = q.value("is_hearing_impaired").toInt() != 0;
+		s.isVisualImpaired  = q.value("is_visual_impaired").toInt() != 0;
+		s.pixelFormat       = q.value("pixel_format").toString();
+		s.frameRate         = q.value("frame_rate").toString();
+		s.codecLevel        = q.value("codec_level").toString();
+		s.codecProfile      = q.value("codec_profile").toString();
+		s.extraJson         = q.value("extra_json").toString();
+		result.append(s);
+	}
+	return result;
+}
+
+QHash<qint64, QList<StreamRecord>> DatabaseManager::allStreamsGrouped() const
+{
+	QHash<qint64, QList<StreamRecord>> result;
+	QSqlQuery q(connection());
+	q.exec("SELECT * FROM streams ORDER BY file_id, stream_index");
+	while (q.next()) {
+		StreamRecord s;
+		s.id                = q.value("id").toLongLong();
+		s.fileId            = q.value("file_id").toLongLong();
+		s.streamIndex       = q.value("stream_index").toInt();
+		s.codecType         = q.value("codec_type").toString();
+		s.codecName         = q.value("codec_name").toString();
+		s.language          = q.value("language").toString();
+		s.title             = q.value("title").toString();
+		s.trackType         = q.value("track_type").toString();
+		s.typeConfidence    = q.value("type_confidence").toDouble();
+		s.channels          = q.value("channels").toInt();
+		s.sampleRate        = q.value("sample_rate").toInt();
+		s.bitRate           = q.value("bit_rate").toLongLong();
+		s.width             = q.value("width").toInt();
+		s.height            = q.value("height").toInt();
+		s.hdrFormat         = q.value("hdr_format").toString();
+		s.isDefault         = q.value("is_default").toInt() != 0;
+		s.isForced          = q.value("is_forced").toInt() != 0;
+		s.isHearingImpaired = q.value("is_hearing_impaired").toInt() != 0;
+		s.isVisualImpaired  = q.value("is_visual_impaired").toInt() != 0;
+		s.pixelFormat       = q.value("pixel_format").toString();
+		s.frameRate         = q.value("frame_rate").toString();
+		s.codecLevel        = q.value("codec_level").toString();
+		s.codecProfile      = q.value("codec_profile").toString();
+		s.extraJson         = q.value("extra_json").toString();
+		result[s.fileId].append(s);
+	}
+	return result;
 }
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
 qint64 DatabaseManager::insertJob(const JobRecord& job)
 {
-    QSqlQuery q(m_db);
-    q.prepare(R"(
-        INSERT INTO jobs(file_id, status, job_type, command_args_json,
-                         dry_run, created_at, estimated_saving_bytes)
-        VALUES(?,?,?,?,?,?,?)
-    )");
-    q.addBindValue(job.fileId > 0 ? QVariant(job.fileId) : QVariant());
-    q.addBindValue(job.status.isEmpty() ? "pending" : job.status);
-    q.addBindValue(job.jobType);
-    q.addBindValue(job.commandArgsJson);
-    q.addBindValue(job.dryRun ? 1 : 0);
-    q.addBindValue(QDateTime::currentSecsSinceEpoch());
-    q.addBindValue(job.estimatedSavingBytes);
-    if (!q.exec()) {
-        qWarning() << "insertJob failed:" << q.lastError().text();
-        return -1;
-    }
-    return q.lastInsertId().toLongLong();
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO jobs(file_id, status, job_type, command_args_json,
+						 summary, dry_run, created_at, description_text, original_streams_json)
+		VALUES(?,?,?,?,?,?,?,?,?)
+	)");
+	q.addBindValue(job.fileId > 0 ? QVariant(job.fileId) : QVariant());
+	q.addBindValue(job.status.isEmpty() ? "proposed" : job.status);
+	q.addBindValue(job.jobType.isEmpty() ? "remux" : job.jobType);
+	q.addBindValue(job.commandArgsJson);
+	q.addBindValue(job.summary);
+	q.addBindValue(job.dryRun ? 1 : 0);
+	q.addBindValue(QDateTime::currentSecsSinceEpoch());
+	q.addBindValue(job.descriptionText);
+	q.addBindValue(job.originalStreamsJson);
+	if (!q.exec()) {
+		qWarning() << "insertJob failed:" << q.lastError().text();
+		return -1;
+	}
+	return q.lastInsertId().toLongLong();
 }
 
 bool DatabaseManager::updateJobStatus(qint64 jobId, const QString& status, int resultCode, const QString& log)
 {
-    QSqlQuery q(m_db);
-    if (status == "running") {
-        q.prepare("UPDATE jobs SET status=?, started_at=? WHERE id=?");
-        q.addBindValue(status);
-        q.addBindValue(QDateTime::currentSecsSinceEpoch());
-        q.addBindValue(jobId);
-    } else {
-        q.prepare("UPDATE jobs SET status=?, finished_at=?, result_code=?, output_log=? WHERE id=?");
-        q.addBindValue(status);
-        q.addBindValue(QDateTime::currentSecsSinceEpoch());
-        q.addBindValue(resultCode);
-        q.addBindValue(log);
-        q.addBindValue(jobId);
-    }
-    const bool ok = q.exec();
-    if (ok)
-        emit jobStatusChanged(jobId, status);
-    return ok;
+	QSqlQuery q(connection());
+	if (status == "running") {
+		q.prepare("UPDATE jobs SET status=?, started_at=? WHERE id=?");
+		q.addBindValue(status);
+		q.addBindValue(QDateTime::currentSecsSinceEpoch());
+		q.addBindValue(jobId);
+	} else {
+		q.prepare("UPDATE jobs SET status=?, finished_at=?, result_code=?, output_log=? WHERE id=?");
+		q.addBindValue(status);
+		q.addBindValue(QDateTime::currentSecsSinceEpoch());
+		q.addBindValue(resultCode);
+		q.addBindValue(log);
+		q.addBindValue(jobId);
+	}
+	const bool ok = q.exec();
+	if (ok) emit jobStatusChanged(jobId, status);
+	return ok;
+}
+
+bool DatabaseManager::updateJobSavedBytes(qint64 jobId, qint64 savedBytes)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET saved_bytes=? WHERE id=?");
+	q.addBindValue(savedBytes);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
+bool DatabaseManager::updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET command_args_json=? WHERE id=? AND status='proposed'");
+	q.addBindValue(commandArgsJson);
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
+bool DatabaseManager::deleteJob(qint64 jobId)
+{
+	QSqlQuery q(connection());
+	q.prepare("DELETE FROM jobs WHERE id=?");
+	q.addBindValue(jobId);
+	return q.exec();
+}
+
+bool DatabaseManager::clearJobsByStatus(const QString& status)
+{
+	QSqlQuery q(connection());
+	q.prepare("DELETE FROM jobs WHERE status=?");
+	q.addBindValue(status);
+	return q.exec();
+}
+
+bool DatabaseManager::promoteJobsToQueued(const QList<qint64>& jobIds)
+{
+	if (jobIds.isEmpty()) return true;
+	connection().transaction();
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET status='queued' WHERE id=? AND status='proposed'");
+	for (qint64 id : jobIds) {
+		q.addBindValue(id);
+		if (!q.exec()) { connection().rollback(); return false; }
+		emit jobStatusChanged(id, "queued");
+	}
+	connection().commit();
+	return true;
+}
+
+bool DatabaseManager::updateFileOriginalLanguage(qint64 fileId, const QString& lang)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET original_language=? WHERE id=?");
+	q.addBindValue(lang);
+	q.addBindValue(fileId);
+	return q.exec();
+}
+
+QList<JobRecord> DatabaseManager::queuedJobs() const
+{
+	QList<JobRecord> result;
+	QSqlQuery q(connection());
+	// Join files to order by size ascending — smallest files run first so each
+	// completed job frees the most proportional space for the next.
+	q.exec(R"(
+		SELECT j.id, j.file_id, j.status, j.job_type, j.command_args_json,
+		       j.summary, j.dry_run, j.created_at, j.started_at, j.finished_at,
+		       j.result_code, j.output_log, j.saved_bytes, j.description_text
+		FROM jobs j
+		LEFT JOIN files f ON j.file_id = f.id
+		WHERE j.status = 'queued'
+		ORDER BY COALESCE(f.size_bytes, 0) ASC
+	)");
+	while (q.next()) {
+		JobRecord j;
+		j.id               = q.value("id").toLongLong();
+		j.fileId           = q.value("file_id").toLongLong();
+		j.status           = q.value("status").toString();
+		j.jobType          = q.value("job_type").toString();
+		j.commandArgsJson  = q.value("command_args_json").toString();
+		j.summary          = q.value("summary").toString();
+		j.dryRun           = q.value("dry_run").toInt() != 0;
+		j.createdAt        = q.value("created_at").toLongLong();
+		j.startedAt        = q.value("started_at").toLongLong();
+		j.finishedAt       = q.value("finished_at").toLongLong();
+		j.resultCode       = q.value("result_code").toInt();
+		j.outputLog        = q.value("output_log").toString();
+		j.savedBytes       = q.value("saved_bytes").toLongLong();
+		j.descriptionText  = q.value("description_text").toString();
+		result.append(j);
+	}
+	return result;
+}
+
+QList<JobRecord> DatabaseManager::allJobs() const
+{
+	QList<JobRecord> result;
+	QSqlQuery q(connection());
+	q.exec("SELECT * FROM jobs ORDER BY created_at DESC");
+	while (q.next()) {
+		JobRecord j;
+		j.id               = q.value("id").toLongLong();
+		j.fileId           = q.value("file_id").toLongLong();
+		j.status           = q.value("status").toString();
+		j.jobType          = q.value("job_type").toString();
+		j.commandArgsJson  = q.value("command_args_json").toString();
+		j.summary          = q.value("summary").toString();
+		j.dryRun           = q.value("dry_run").toInt() != 0;
+		j.createdAt        = q.value("created_at").toLongLong();
+		j.startedAt        = q.value("started_at").toLongLong();
+		j.finishedAt       = q.value("finished_at").toLongLong();
+		j.resultCode       = q.value("result_code").toInt();
+		j.outputLog        = q.value("output_log").toString();
+		j.savedBytes            = q.value("saved_bytes").toLongLong();
+		j.descriptionText       = q.value("description_text").toString();
+		j.originalStreamsJson   = q.value("original_streams_json").toString();
+		result.append(j);
+	}
+	return result;
+}
+
+QList<JobDisplayRecord> DatabaseManager::allJobsForPanel() const
+{
+	QList<JobDisplayRecord> result;
+	QSqlQuery q(connection());
+	q.exec(R"(
+		SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,
+			   f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,
+			   COALESCE(pc.imdb_id, '') AS imdb_id
+		FROM jobs j
+		LEFT JOIN files f ON j.file_id = f.id
+		LEFT JOIN poster_cache pc ON j.file_id = pc.file_id
+		ORDER BY size_bytes ASC, j.created_at ASC
+	)");
+	while (q.next()) {
+		JobDisplayRecord r;
+		r.jobId     = q.value(0).toLongLong();
+		r.fileId    = q.value(1).toLongLong();
+		r.summary   = q.value(2).toString();
+		r.status    = q.value(3).toString();
+		r.savedBytes= q.value(4).toLongLong();
+		r.createdAt = q.value(5).toLongLong();
+		r.filename  = q.value(6).toString();
+		r.filePath  = q.value(7).toString();
+		r.sizeBytes = q.value(8).toLongLong();
+		r.imdbId    = q.value(9).toString();
+		result.append(r);
+	}
+	return result;
 }
 
 // ── Preferences ───────────────────────────────────────────────────────────────
 
 bool DatabaseManager::setPref(const QString& key, const QString& value)
 {
-    QSqlQuery q(m_db);
-    q.prepare("INSERT OR REPLACE INTO preferences(key,value) VALUES(?,?)");
-    q.addBindValue(key);
-    q.addBindValue(value);
-    return q.exec();
+	QSqlQuery q(connection());
+	q.prepare("INSERT OR REPLACE INTO preferences(key,value) VALUES(?,?)");
+	q.addBindValue(key);
+	q.addBindValue(value);
+	return q.exec();
 }
 
 QString DatabaseManager::getPref(const QString& key, const QString& defaultValue) const
 {
-    QSqlQuery q(m_db);
-    q.prepare("SELECT value FROM preferences WHERE key=?");
-    q.addBindValue(key);
-    if (q.exec() && q.next())
-        return q.value(0).toString();
-    return defaultValue;
+	QSqlQuery q(connection());
+	q.prepare("SELECT value FROM preferences WHERE key=?");
+	q.addBindValue(key);
+	if (q.exec() && q.next())
+		return q.value(0).toString();
+	return defaultValue;
+}
+
+// ── Poster cache ──────────────────────────────────────────────────────────────
+
+void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
+{
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, source, status, image_path, imdb_id, fetched_at)
+		VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_id) DO UPDATE SET
+			source=excluded.source,
+			status=excluded.status,
+			image_path=excluded.image_path,
+			imdb_id=excluded.imdb_id,
+			fetched_at=excluded.fetched_at
+	)");
+	// Bind empty string (not null) — Qt maps null QString → SQL NULL which violates NOT NULL
+	auto nn = [](const QString& s) { return s.isNull() ? QString("") : s; };
+	q.addBindValue(rec.fileId);
+	q.addBindValue(nn(rec.source));
+	q.addBindValue(nn(rec.status));
+	q.addBindValue(nn(rec.imagePath));
+	q.addBindValue(nn(rec.imdbId));
+	q.addBindValue(rec.fetchedAt);
+	if (!q.exec())
+		qWarning() << "upsertPosterRecord failed:" << q.lastError().text();
+}
+
+std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
+{
+	QSqlQuery q(connection());
+	q.prepare("SELECT source,status,image_path,imdb_id,fetched_at FROM poster_cache WHERE file_id=?");
+	q.addBindValue(fileId);
+	if (!q.exec() || !q.next()) return {};
+	PosterRecord r;
+	r.fileId    = fileId;
+	r.source    = q.value(0).toString();
+	r.status    = q.value(1).toString();
+	r.imagePath = q.value(2).toString();
+	r.imdbId    = q.value(3).toString();
+	r.fetchedAt = q.value(4).toLongLong();
+	return r;
+}
+
+QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
+{
+	QSqlQuery q(connection());
+	q.exec(R"(
+		SELECT f.id FROM files f
+		LEFT JOIN poster_cache pc ON pc.file_id = f.id
+		WHERE pc.file_id IS NULL OR pc.status = 'pending'
+		ORDER BY f.id
+	)");
+	QList<qint64> ids;
+	while (q.next()) ids << q.value(0).toLongLong();
+	return ids;
+}
+
+void DatabaseManager::resetPosterForFile(qint64 fileId)
+{
+	QSqlQuery q(connection());
+	// ON CONFLICT preserves imdb_id — only the poster image fields are reset.
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, source, status, image_path, imdb_id, fetched_at)
+		VALUES(?, '', 'pending', '', '', 0)
+		ON CONFLICT(file_id) DO UPDATE SET
+			source = '', status = 'pending', image_path = '', fetched_at = 0
+	)");
+	q.addBindValue(fileId);
+	q.exec();
+}
+
+void DatabaseManager::updateImdbId(qint64 fileId, const QString& imdbId)
+{
+	QSqlQuery q(connection());
+	// Upsert a minimal row if none exists, or update only imdb_id on conflict.
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, source, status, image_path, imdb_id, fetched_at)
+		VALUES(?, '', 'pending', '', ?, 0)
+		ON CONFLICT(file_id) DO UPDATE SET imdb_id = excluded.imdb_id
+	)");
+	q.addBindValue(fileId);
+	q.addBindValue(imdbId);
+	if (!q.exec())
+		qWarning() << "updateImdbId failed:" << q.lastError().text();
+}
+
+void DatabaseManager::resetNoPosterRecords()
+{
+	QSqlQuery q(connection());
+	q.exec("UPDATE poster_cache SET status='pending',source='',image_path='' WHERE status='no_poster'");
+}
+
+QHash<qint64, QString> DatabaseManager::allDonePosterPaths() const
+{
+	QSqlQuery q(connection());
+	q.exec("SELECT file_id, image_path FROM poster_cache WHERE status='done' AND image_path != ''");
+	QHash<qint64, QString> result;
+	while (q.next())
+		result.insert(q.value(0).toLongLong(), q.value(1).toString());
+	return result;
+}
+
+void DatabaseManager::cleanupStalledJobs()
+{
+	QSqlQuery q(connection());
+	// Find all jobs that were 'running' when the app last crashed
+	q.exec("SELECT id, command_args_json FROM jobs WHERE status='running'");
+	QList<QPair<qint64, QString>> stalled;
+	while (q.next())
+		stalled.append({q.value(0).toLongLong(), q.value(1).toString()});
+
+	if (stalled.isEmpty()) return;
+
+	for (const auto& [jobId, argsJson] : stalled) {
+		// Parse the command args to find the temp output path (arg after "-o")
+		const QJsonArray arr = QJsonDocument::fromJson(argsJson.toUtf8()).array();
+		for (int i = 0; i + 1 < arr.size(); ++i) {
+			if (arr.at(i).toString() == "-o") {
+				const QString tmpPath = arr.at(i + 1).toString();
+				if (!tmpPath.isEmpty() && QFile::exists(tmpPath)) {
+					QFile::remove(tmpPath);
+					qDebug() << "Removed stalled temp file:" << tmpPath;
+				}
+				break;
+			}
+		}
+	}
+
+	// Reset all stalled jobs to failed
+	QSqlQuery upd(connection());
+	upd.exec("UPDATE jobs SET status='failed', result_code=-1 WHERE status='running'");
 }
 
 } // namespace Mc

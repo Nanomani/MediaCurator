@@ -1,11 +1,33 @@
-#pragma once
+﻿#pragma once
+#include "engine/TrackDecision.h"
 #include <QDialog>
 
+class QTableWidget;
+class QLabel;
+
 namespace Mc {
-/** Shows before/after track list for a single file. Phase 2. */
-class McPreviewDialog : public QDialog {
-    Q_OBJECT
+
+/**
+ * McPreviewDialog — shows the before/after track layout for a single file.
+ *
+ * "Before" table: every track with a Decision column (Keep/Remove/Unsure)
+ *                 colour-coded, plus the rule-engine reason string.
+ * "After"  table: only tracks that are marked Keep.
+ */
+class McPreviewDialog : public QDialog
+{
+	Q_OBJECT
 public:
-    explicit McPreviewDialog(QWidget* parent = nullptr);
+	explicit McPreviewDialog(QWidget* parent = nullptr);
+	explicit McPreviewDialog(const FileDecision& decision, QWidget* parent = nullptr);
+
+private:
+	void setupUi(const FileDecision& decision);
+	static void populateBeforeTable(QTableWidget* table, const FileDecision& decision);
+	static void populateAfterTable (QTableWidget* table, const FileDecision& decision);
+	static QString formatBitrate(qint64 bps);
+	static QString decisionText(Decision d);
+	static QColor  decisionColor(Decision d);
 };
+
 } // namespace Mc

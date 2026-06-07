@@ -5,89 +5,107 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 
 ---
 
-## 🚀 SHIP QUEUE (current sprint)
-> These items are ready to be worked. Pick from the top.
+## 🚀 SHIP QUEUE (current sprint — Phase 2 core)
+> These items unlock the end-to-end Analyze → Review → Execute flow.
 
-- [ ] `[P1]` **CMakeLists.txt** — root + src/CMakeLists with Qt6, nlohmann/json via vcpkg, MSVC config
-- [ ] `[P1]` **DatabaseManager** — schema init, CRUD for files/streams/jobs tables
-- [ ] `[P1]` **FfprobeScanner** — invoke ffprobe -v quiet -print_format json -show_streams -show_format, parse result, insert into DB
-- [ ] `[P1]` **McMainWindow skeleton** — menu bar, splitter, status bar, central QTableView placeholder
-- [ ] `[P1]` **McTrackTableModel** — QAbstractTableModel reading streams+files JOIN from DB
-- [ ] `[P1]` **ScanWorker** — QThread, scans a folder recursively for video files, emits progress
-- [ ] `[P1]` **ExternalTools** — locate ffprobe.exe/mkvmerge.exe in tools/ relative to exe, validate version
+- [x] `[P1]` **UserProfile** — model + JSON serialisation to DB prefs table (understood languages, keep-original toggle, preferred codec order)
+- [x] `[P1]` **McSettingsDialog** — edit UserProfile: language list, codec preferences, subtitle rules
+- [x] `[P1]` **"Analyze Library" action** — runs RuleEngine across all DB files, writes proposed jobs (status=`proposed`) to `jobs` table; triggered from toolbar/menu (Ctrl+Shift+A)
+- [x] `[P1]` **McJobPanel** — bottom splitter panel; shows proposed/pending/running/done jobs with filename, summary, status colour-coded, MB/GB saved; checkbox per row; "Queue Selected" / "Queue All" / "Remove" / Start / Pause / Cancel toolbar
+- [x] `[P1]` **Space saved per job** — after successful remux, records `original_size_bytes − output_size_bytes` in jobs table; shown per completed row and as running total in panel footer
+- [x] `[P1]` **JobQueue runner** — promotes `pending` jobs one at a time via QProcess (async, no extra thread); emits progress back to McJobPanel; user can edit queue while a job runs
+- [x] `[P1]` **RemuxJob** — QProcess wrapper around mkvmerge; captures stdout/stderr for progress %; writes result_code + log to DB on finish; atomic rename via std::filesystem
+- [x] `[P1]` **Post-job rescan** — on successful job completion, re-scan that file via FfprobeScanner and update DB; refresh card in McFileListModel
 
 ---
 
 ## Phase 1 — Foundation
 
-- [ ] `[P1]` Basic column sort/filter on the main table (QSortFilterProxyModel)
-- [ ] `[P1]` Persistent window geometry (QSettings)
-- [ ] `[P2]` File context menu: open folder, open in VLC
-- [ ] `[P2]` Scan progress dialog with cancel support
-- [ ] `[P2]` Incremental rescan (only changed files based on mtime/size)
-- [ ] `[P2]` Multi-root library support (scan multiple folders)
+- [x] `[P1]` CMakeLists.txt — root + src/CMakeLists with Qt6, nlohmann/json via vcpkg, MSVC config
+- [x] `[P1]` DatabaseManager — schema init, CRUD for files/streams/jobs tables
+- [x] `[P1]` FfprobeScanner — invoke ffprobe, parse JSON, insert into DB
+- [x] `[P1]` McMainWindow skeleton — menu bar, status bar, central widget
+- [x] `[P1]` ScanWorker — QThread, scans folder recursively for video files, emits progress
+- [x] `[P1]` ExternalTools — locate ffprobe.exe/mkvmerge.exe in tools/ relative to exe
+- [x] `[P1]` McTrackTableModel — flat stream+file join model (kept for export/future use)
+- [x] `[P1]` McFileListModel + McFileCardDelegate — per-file card view with codec badges (video/audio/subtitle rows with colour-coded pills, "+N" overflow)
+- [x] `[P1]` Persistent window geometry (QSettings)
+- [x] `[P2]` **Initial window size & layout** — on first launch (before any saved geometry), size window to primary monitor minus 50 px on each edge and centre it; set splitter to 50/50 between library and job queue
+- [x] `[P2]` File context menu — right-click card: "Open Containing Folder", "Play in VLC"
+- [x] `[P2]` Scan cancel support — cancel button in progress bar aborts ScanWorker cleanly
+- [x] `[P2]` Incremental rescan — skip files where mtime + size unchanged since last scan
+- [x] `[P2]` Multi-root library support — scan multiple root folders, show all in one view
+- [x] `[P2]` Prune stale files on scan — after scan loop, delete DB rows whose path no longer exists under the scanned root
+- [x] `[P2]` Remove folder from library — action (menu/toolbar) that bulk-deletes all DB files under a chosen root path
+- [-] `[P2]` Basic column sort/filter — deferred; card view replaces flat table; revisit if a list-filter bar is added
+- [-] `[P2]` Embedded poster extraction — deferred indefinitely (embedded art is typically low quality; TMDB is the preferred source)
+- [ ] `[P3]` Movie title lookup — only relevant when multiple movie files share the same folder (e.g. a flat library), where showing the foldername per-card is redundant/wrong and the real title+year would be more useful. For single-file-per-folder libraries the foldername already serves as the title. Implementation: right-click → "Find on TMDB…" opens ImdbSearchDialog (already written); confirmed match writes a .nfo + poster_cache imdb_id; PosterManager fetches poster; card shows cover art + clean title. Infrastructure already in place: PosterManager, ImdbSearchDialog, NfoParser, poster_cache table. Missing: movie_title column in files table, right-click trigger, poster display in McFileCardDelegate, scan-time .nfo ingestion.
 - [ ] `[P3]` File watcher (QFileSystemWatcher) for live library updates
 
 ---
 
 ## Phase 2 — Rule Engine & Preview
 
-- [ ] `[P1]` **UserProfile** model + JSON serialization to DB prefs table
-- [ ] `[P1]` **McSettingsDialog** — understood languages, keep-original toggle, preferred codec order
-- [ ] `[P1]` **OriginalLanguageDetector** — check file tags, fall back to majority audio language
-- [ ] `[P1]` **CodecHierarchy** — built-in table: TrueHD⊃AC3, DTS-HD MA⊃DTS, etc.
-- [ ] `[P1]` **RuleEngine::evaluateFile()** — returns TrackDecision (KEEP/REMOVE/UNSURE) per stream
-- [ ] `[P1]` **McPreviewDialog** — before/after track table for one file, shows reason per track
-- [ ] `[P2]` Estimated size saving calculation (bitrate × duration for removed tracks)
-- [ ] `[P2]` Filter panel: "show only files with redundant audio"
-- [ ] `[P2]` Filter panel: "show files with tracks in languages not in my profile"
-- [ ] `[P2]` Bulk preview — apply rules across all selected files, show aggregate summary
-- [ ] `[P3]` Rule conflict detection (e.g. only audio track would be removed)
-- [ ] `[P3]` Per-file override — manually pin a track to KEEP or REMOVE regardless of policy
+- [x] `[P1]` **UserProfile** — see Ship Queue
+- [x] `[P1]` **McSettingsDialog** — see Ship Queue
+- [x] `[P1]` **OriginalLanguageDetector** — heuristic: first non-`und` audio track language; updates DB on first analyze
+- [~] `[P1]` **CodecHierarchy** — baked into RuleEngine (ac3/eac3/dts→lossless sibling check); standalone class deferred
+- [x] `[P1]` **RuleEngine::evaluateFile()** — Tier 1 codec redundancy + Tier 2 language policy; returns TrackDecision per stream
+- [x] `[P1]` **"Analyze Library" action** — see Ship Queue
+- [x] `[P1]` **McPreviewDialog** — before/after track list for one file; shows decision + reason per track; opened from card right-click or row double-click in job panel
+- [x] `[P2]` Filter bar — text search + "only files with proposed removals" / "only files with unknown-language tracks"
+- [x] `[P2]` Bulk preview — apply rules across selected files, show aggregate summary (N files · M tracks · X GB)
+- [-] `[P3]` Rule conflict detection — deferred; `alwaysKeepOriginalAudio` (default on) + OriginalLanguageDetector already protect the only-track case; codec redundancy can never remove the last sibling; badge visualisation surfaces any edge case before execution
+- [x] `[P3]` Per-file override — covered by badge toggle on proposed job cards; click any badge to flip keep/remove and it persists to DB
 
 ---
 
 ## Phase 3 — Action Engine
 
-- [ ] `[P1]` **ActionEngine::buildCommand()** — mkvmerge args from TrackDecisions
-- [ ] `[P1]` **RemuxJob** — QProcess wrapper, captures stdout/stderr, emits progress
-- [ ] `[P1]` **JobQueue** — sequential job runner, pause/resume/cancel
-- [ ] `[P1]` **McJobPanel** — bottom panel: job list, progress bar, dry-run toggle, run button
-- [ ] `[P1]` Dry-run mode — shows mkvmerge command without executing
-- [ ] `[P1]` Post-job rescan — update DB after successful remux
-- [ ] `[P1]` Atomic rename — temp output → original path after verification
-- [ ] `[P2]` Job history log (persist to DB)
-- [ ] `[P2]` Space-saved tracker (cumulative bytes freed)
-- [ ] `[P2]` Undo via trash (move original to OS recycle bin before replace)
-- [ ] `[P3]` Parallel jobs (configurable worker count)
-- [ ] `[P3]` Job export — save mkvmerge script as .bat/.sh for manual review
+- [x] `[P1]` **ActionEngine::buildCommand()** — see Ship Queue
+- [x] `[P1]` **RemuxJob** — see Ship Queue
+- [x] `[P1]` **JobQueue runner** — see Ship Queue
+- [x] `[P1]` **McJobPanel** — see Ship Queue
+- [x] `[P1]` **Space saved per job** — see Ship Queue
+- [x] `[P1]` **Post-job rescan** — see Ship Queue
+- [x] `[P1]` Dry-run mode — "Preview Command" button shows the mkvmerge invocation without executing; shown in a dialog or the log area
+- [x] `[P1]` Atomic rename — `<file.path>.tmp` then `std::filesystem::rename` over original only after mkvmerge exits 0
+- [ ] `[P2]` Job history log — persist all completed jobs in DB; viewable in a separate History tab
+- [x] `[P2]` Space-saved tracker — cumulative GB freed shown in main window status bar (sum across all completed jobs)
+- [ ] `[P2]` Undo via trash — move original to OS recycle bin before overwrite (Windows: SHFileOperation / IFileOperation)
+- [x] `[P3]` **Status combobox badge delegate** — the job-panel status filter combobox items (proposed / pending / running / done / failed) should render using the same pill style as the card badges: coloured background, rounded rect, matching font size and padding; implement as a `QStyledItemDelegate` on the combobox's view
+- [x] `[P2]` **ETA display in job panel** — show estimated time remaining for the current job (based on elapsed time vs progress %) and for the whole queue (sum of per-job estimates using average MB/s from completed jobs); displayed in the McJobPanel footer next to the space-saved total
+- [ ] `[P3]` Parallel jobs — configurable worker count (2–4); useful on NAS/RAID where I/O is not the bottleneck
+- [ ] `[P3]` Job export — save queue as .bat/.sh mkvmerge script for manual review
 
 ---
 
 ## Phase 4 — Track Classifier
 
-- [ ] `[P1]` `data/track_classifier.json` — regex/keyword rules for commentary, SDH, forced, signs
-- [ ] `[P1]` **RegexClassifier** — fast keyword matching, O(1) per track title
-- [ ] `[P1]` Commentary tracks: apply keep policy based on understood languages
-- [ ] `[P2]` SDH/HI subtitles: configurable keep/remove separately from regular subtitles
-- [ ] `[P2]` Forced subtitle detection (flag + title heuristic)
-- [ ] `[P2]` Classifier confidence shown as tooltip in track table
-- [ ] `[P3]` **OnnxClassifier** — optional download, ~50MB, better accuracy on unusual titles
-- [ ] `[P3]` **ApiClassifier** — Claude API, user provides key, fractions of a cent/file
-- [ ] `[P3]` User-trainable classifier — "this track is commentary, remember it" feedback loop
+- [x] `[P1]` `data/track_classifier.json` — regex/keyword rules for commentary, SDH, forced, signs
+- [x] `[P1]` **RegexClassifier** — keyword matching on track title; classifies commentary/SDH/forced/signs/main
+- [x] `[P1]` Commentary tracks — keep/remove policy based on understood languages + user toggle
+- [x] `[P2]` SDH/HI subtitles — 4-mode preference (Keep / Remove / PreferNonSdh / PreferSdh) + subtitle format priority (PGS vs SRT vs ASS etc.) with per-language redundancy removal
+- [x] `[P2]` **MJPEG cover-art removal** — detect video streams with codec `mjpeg` (embedded cover/thumbnail art); add toggle in Settings (default ON); RuleEngine marks them for removal; they appear in the job queue badge row with the red strikethrough like any other removed track
+- [x] `[P2]` Forced subtitle detection — flag + title heuristic
+- [x] `[P2]` Classifier confidence shown as tooltip on badge in card view
+- [-] `[P3]` **OnnxClassifier** — deferred; regex classifier sufficient for current needs
+- [-] `[P3]` **ApiClassifier** — deferred
+- [-] `[P3]` User-trainable classifier — deferred
 
 ---
 
 ## Phase 5 — Non-MKV & Packaging
 
-- [ ] `[P1]` Non-MKV remux flow — mkvmerge from mp4/avi input with track filter in single pass
-- [ ] `[P1]` scripts/setup_tools.ps1 — auto-download ffprobe + mkvmerge portable (Windows)
+- [ ] `[P1]` Non-MKV remux flow — mkvmerge from mp4/avi input with track filter in single pass; original kept until user confirms
+- [ ] `[P1]` **ISO → MKV conversion** — detect `.iso` files during scan; probe with `ffprobe -i bluray:path.iso` (or `dvd://`); ActionEngine injects `bluray://` / `dvd://` prefix and targets a new `.mkv` output path instead of overwriting in-place; on successful write, delete the original ISO; post-job rescan updates the DB entry to the new `.mkv` path
+- [x] `[P1]` scripts/setup_tools.ps1 — auto-download ffprobe + mkvmerge portable (Windows)
 - [ ] `[P1]` scripts/setup_tools.sh — same for Linux/macOS
 - [ ] `[P2]` CPack NSIS installer (Windows) — bundles tools/, Qt DLLs, MSVC redistributable
 - [ ] `[P2]` CPack DMG (macOS)
 - [ ] `[P2]` CPack AppImage (Linux)
-- [ ] `[P2]` About dialog with version, license info, donation link (Ko-fi / GitHub Sponsors)
-- [ ] `[P2]` GitHub Actions CI — Windows build + test on push
+- [x] `[P2]` About dialog — version, license info, Ko-fi / GitHub Sponsors link
+- [x] `[P2]` GitHub Actions CI — Windows build + test on push
 - [ ] `[P3]` macOS/Linux CI jobs
 - [ ] `[P3]` Automatic update check (compare GitHub release tag)
 
@@ -110,12 +128,27 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 
 > Add bugs here as found during development.
 
-- (none yet)
+- [x] **Delete key not handled in job queue** — pressing Delete with items selected in McJobPanel should trigger the Remove action (same as the toolbar Remove button); currently does nothing
 
 ---
 
 ## Done ✅
 
-> Move items here when merged to main.
-
-(nothing done yet — project just started)
+- [x] CMakeLists.txt — root + src/CMakeLists, Qt6 6.8.3 LTS, nlohmann/json via vcpkg, MSVC/VS2026 config, CMakePresets.json + CMakeUserPresets.json
+- [x] DatabaseManager — schema init, CRUD for files/streams/jobs/scan_runs/prefs tables; `jobStatusChanged` signal; `allJobsForPanel()` JOIN query
+- [x] FfprobeScanner — ffprobe subprocess, JSON parse, DB upsert
+- [x] McMainWindow — splitter layout (file list top / job panel bottom); Scan Folder + Analyze Library + Settings menu; status bar
+- [x] ScanWorker — QThread, recursive video file scan, progress signals
+- [x] ExternalTools — locate ffprobe/mkvmerge relative to exe
+- [x] UserProfile — understood languages, keep-original-audio, subtitle preferences; JSON to DB prefs
+- [x] McSettingsDialog — edit UserProfile; 30 ISO 639-2 language presets + free-type combo; Fusion palette
+- [x] McTrackTableModel — flat stream+file join model (kept for future export/filter use)
+- [x] McFileListModel + McFileCardDelegate — per-file card view; codec badge rows; colour-coded pills; "+N" overflow; alternating rows
+- [x] Persistent window geometry + state (QSettings)
+- [x] OriginalLanguageDetector — heuristic from first non-`und` audio track
+- [x] RuleEngine — Tier 1 codec hierarchy (DTS-HD MA / TrueHD beats lossy siblings); Tier 2 language policy
+- [x] ActionEngine — builds mkvmerge --audio-tracks / --subtitle-tracks args from FileDecision
+- [x] RemuxJob — async QProcess; progress parsing; atomic rename; savedBytes measurement
+- [x] JobQueue — serial async queue; start/pause/cancel; DB status updates; savedBytes persisted
+- [x] McJobPanel — job table with checkbox, summary, colour-coded status, MB/GB saved; footer total; Queue Selected / Queue All / Remove / Start / Pause / Cancel
+- [x] RegexClassifier — keyword matching: commentary / SDH / forced / signs / main

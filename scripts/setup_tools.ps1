@@ -37,9 +37,8 @@ if (-not (Test-Path $FfprobeExe)) {
     Write-Host "  ffprobe.exe already present" -ForegroundColor Gray
 }
 
-# ── MKVToolNix (mkvmerge + mkvpropedit) ────────────────────────────────────────
-$MkvmergeExe    = Join-Path $ToolsDir "mkvmerge.exe"
-$MkvpropeditExe = Join-Path $ToolsDir "mkvpropedit.exe"
+# ── MKVToolNix (mkvmerge) ───────────────────────────────────────────────────────
+$MkvmergeExe = Join-Path $ToolsDir "mkvmerge.exe"
 
 if (-not (Test-Path $MkvmergeExe)) {
     Write-Host "Downloading MKVToolNix portable..."
@@ -50,11 +49,10 @@ if (-not (Test-Path $MkvmergeExe)) {
 
     Write-Host "  NOTE: MKVToolNix uses 7z format. Please download manually from:"
     Write-Host "  https://mkvtoolnix.download/downloads.html#windows" -ForegroundColor Yellow
-    Write-Host "  Extract mkvmerge.exe and mkvpropedit.exe to: $ToolsDir"
+    Write-Host "  Extract mkvmerge.exe to: $ToolsDir"
     Write-Host ""
     Write-Host "  OR install MKVToolNix normally and copy from the install dir:"
     Write-Host "  C:\Program Files\MKVToolNix\mkvmerge.exe"
-    Write-Host "  C:\Program Files\MKVToolNix\mkvpropedit.exe"
 } else {
     Write-Host "  mkvmerge.exe already present" -ForegroundColor Gray
 }
@@ -62,7 +60,7 @@ if (-not (Test-Path $MkvmergeExe)) {
 # ── Verify ─────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "Tool status:"
-@("ffprobe.exe", "mkvmerge.exe", "mkvpropedit.exe") | ForEach-Object {
+@("ffprobe.exe", "mkvmerge.exe") | ForEach-Object {
     $Path = Join-Path $ToolsDir $_
     if (Test-Path $Path) {
         Write-Host "  [OK] $_" -ForegroundColor Green

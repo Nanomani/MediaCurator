@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 
 #include "scanner/FfprobeScanner.h"
+#include "core/DatabaseManager.h"
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -25,31 +26,30 @@ namespace Mc {
  */
 class ScanWorker : public QObject
 {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    explicit ScanWorker(const QString& ffprobePath, QObject* parent = nullptr);
+	explicit ScanWorker(const QString& ffprobePath, QObject* parent = nullptr);
 
-    void setRootPath(const QString& path) { m_rootPath = path; }
-    void cancel() { m_cancelled.storeRelaxed(1); }
+	void setRootPath(const QString& path) { m_rootPath = path; }
+	void cancel() { m_cancelled.storeRelaxed(1); }
 
-    // File extensions considered as video files
-    static const QStringList& videoExtensions();
+	// File extensions considered as video files
+	static const QStringList& videoExtensions();
 
 public slots:
-    void run();
+	void run();
 
 signals:
-    void progress(int current, int total, const QString& currentFile);
-    void fileScanned(const QString& filePath, bool success);
-    void finished(int scanned, int added, int updated, int failed);
-    void error(const QString& message);
+	void progress(int current, int total, const QString& currentFile);
+	void fileProcessed(Mc::FileRecord file, QList<Mc::StreamRecord> streams);
+	void fileRemoved(qint64 fileId);
+	void finished(int scanned, int added, int updated, int failed, int skipped, int removed);
+	void error(const QString& message);
 
 private:
-    QStringList collectVideoFiles(const QString& rootPath) const;
-
-    QString        m_rootPath;
-    QString        m_ffprobePath;
-    QAtomicInt     m_cancelled{0};
+	QString        m_rootPath;
+	QString        m_ffprobePath;
+	QAtomicInt     m_cancelled{0};
 };
 
 } // namespace Mc

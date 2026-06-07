@@ -1,0 +1,3 @@
+// Windows application icon — used by Explorer, taskbar pinned icon, and Alt+Tab.
+// Uncomment once app_icon.ico (16/32/48/256 px) is placed next to this file.
+// IDI_ICON1 ICON "app_icon.ico"

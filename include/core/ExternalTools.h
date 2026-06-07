@@ -1,30 +1,39 @@
-#pragma once
+﻿#pragma once
 #include <QObject>
 #include <QString>
 
 namespace Mc {
 /**
- * ExternalTools — locates and validates ffprobe, mkvmerge, mkvpropedit.
+ * ExternalTools — locates and validates ffprobe and mkvmerge.
  * Searches in: tools/<platform>/ relative to the executable, then PATH.
  */
 class ExternalTools : public QObject {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    static ExternalTools& instance();
+	static ExternalTools& instance();
 
-    QString ffprobePath()     const;
-    QString mkvmergePath()    const;
-    QString mkvpropeditPath() const;
+	QString ffprobePath()     const;
+	QString ffmpegPath()      const;
+	QString mkvmergePath()    const;
+	QString mkvextractPath()  const;
 
-    bool    validateAll();
-    QString ffprobeVersion()  const;
-    QString mkvmergeVersion() const;
+	// Returns the absolute path to vlc.exe / vlc if found, otherwise empty string.
+	// Checks standard install locations and PATH; result is cached after first call.
+	QString vlcPath()         const;
+	bool    isVlcAvailable()  const { return !vlcPath().isEmpty(); }
+
+	bool    validateAll();
+	QString ffprobeVersion()  const;
+	QString mkvmergeVersion() const;
 
 private:
-    ExternalTools() = default;
-    QString findTool(const QString& name) const;
-    mutable QString m_ffprobePath;
-    mutable QString m_mkvmergePath;
-    mutable QString m_mkvpropeditPath;
+	ExternalTools() = default;
+	QString findTool(const QString& name) const;
+	mutable QString m_ffprobePath;
+	mutable QString m_ffmpegPath;
+	mutable QString m_mkvmergePath;
+	mutable QString m_mkvextractPath;
+	mutable QString m_vlcPath;
+	mutable bool    m_vlcSearched = false;
 };
 } // namespace Mc

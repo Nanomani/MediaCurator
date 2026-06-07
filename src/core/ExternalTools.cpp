@@ -1,0 +1,60 @@
+#include "core/ExternalTools.h"
+
+#include <QCoreApplication>
+#include <QFile>
+#include <QStandardPaths>
+
+namespace Mc {
+
+ExternalTools& ExternalTools::instance()
+{
+	static ExternalTools s;
+	return s;
+}
+
+QString ExternalTools::findTool(const QString& name) const
+{
+	const QString exeDir = QCoreApplication::applicationDirPath();
+#ifdef Q_OS_WIN
+	const QString platformDir = "windows";
+	const QString ext         = ".exe";
+#elif defined(Q_OS_MACOS)
+	const QString platformDir = "macos";
+	const QString ext;
+#else
+	const QString platformDir = "linux";
+	const QString ext;
+#endif
+	const QString candidate = exeDir + "/tools/" + platformDir + "/" + name + ext;
+	return QFile::exists(candidate) ? candidate : name + ext;
+}
+
+QString ExternalTools::ffprobePath()     const { if (m_ffprobePath.isEmpty())     m_ffprobePath     = findTool("ffprobe");     return m_ffprobePath; }
+QString ExternalTools::ffmpegPath()      const { if (m_ffmpegPath.isEmpty())      m_ffmpegPath      = findTool("ffmpeg");      return m_ffmpegPath; }
+QString ExternalTools::mkvmergePath()    const { if (m_mkvmergePath.isEmpty())    m_mkvmergePath    = findTool("mkvmerge");    return m_mkvmergePath; }
+QString ExternalTools::mkvextractPath()  const { if (m_mkvextractPath.isEmpty())  m_mkvextractPath  = findTool("mkvextract");  return m_mkvextractPath; }
+
+QString ExternalTools::vlcPath() const
+{
+	if (m_vlcSearched) return m_vlcPath;
+	m_vlcSearched = true;
+#ifdef Q_OS_WIN
+	for (const QString& candidate : {
+			QStringLiteral("C:/Program Files/VideoLAN/VLC/vlc.exe"),
+			QStringLiteral("C:/Program Files (x86)/VideoLAN/VLC/vlc.exe"),
+		}) {
+		if (QFile::exists(candidate)) {
+			m_vlcPath = candidate;
+			return m_vlcPath;
+		}
+	}
+#endif
+	m_vlcPath = QStandardPaths::findExecutable(QStringLiteral("vlc"));
+	return m_vlcPath;
+}
+
+bool    ExternalTools::validateAll()      { return true; }
+QString ExternalTools::ffprobeVersion()  const { return {}; }
+QString ExternalTools::mkvmergeVersion() const { return {}; }
+
+} // namespace Mc

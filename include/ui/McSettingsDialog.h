@@ -1,11 +1,53 @@
-#pragma once
+﻿#pragma once
 #include <QDialog>
 
+class QCheckBox;
+class QComboBox;
+class QLineEdit;
+class QListWidget;
+class QPushButton;
+
 namespace Mc {
-/** User profile editor and external tools config. Phase 2. */
-class McSettingsDialog : public QDialog {
-    Q_OBJECT
+
+class UserProfile;
+
+class McSettingsDialog : public QDialog
+{
+	Q_OBJECT
 public:
-    explicit McSettingsDialog(QWidget* parent = nullptr);
+	explicit McSettingsDialog(UserProfile* profile, QWidget* parent = nullptr);
+
+private slots:
+	void onAddLanguage();
+	void onRemoveLanguage();
+	void onAudioFormatUp();
+	void onAudioFormatDown();
+	void onSubFmtUp();
+	void onSubFmtDown();
+
+private:
+	void accept() override;
+
+	UserProfile* m_profile;
+
+	QListWidget* m_langList;
+	QComboBox*   m_langCombo;
+	QCheckBox*   m_chkKeepOriginalAudio;
+	QCheckBox*   m_chkKeepCommentary;
+	QCheckBox*   m_chkStereoCommentary;
+	QListWidget* m_audioFormatList;
+	QPushButton* m_btnFormatUp;
+	QPushButton* m_btnFormatDown;
+	QListWidget* m_subFormatList;
+	QPushButton* m_btnSubFmtUp;
+	QPushButton* m_btnSubFmtDown;
+	QCheckBox*   m_chkSkipSubOnly;
+	QCheckBox*   m_chkRemoveMjpeg;
+	QCheckBox*   m_chkKeepForced;
+	QComboBox*   m_cmbSdhMode;
+	QCheckBox*   m_chkKeepOriginalSub;
+	QCheckBox*   m_chkWriteLog;
+	QLineEdit*   m_editTmdbKey;
 };
+
 } // namespace Mc

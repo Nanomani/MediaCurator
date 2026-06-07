@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "core/DatabaseManager.h"
 #include <QObject>
@@ -16,44 +16,44 @@ namespace Mc {
  */
 class FfprobeScanner : public QObject
 {
-    Q_OBJECT
+	Q_OBJECT
 public:
-    explicit FfprobeScanner(const QString& ffprobePath, QObject* parent = nullptr);
+	explicit FfprobeScanner(const QString& ffprobePath, QObject* parent = nullptr);
 
-    struct ScanResult {
-        FileRecord              file;
-        QList<StreamRecord>     streams;
-        QString                 errorMessage;
-        bool                    success = false;
-    };
+	struct ScanResult {
+		FileRecord              file;
+		QList<StreamRecord>     streams;
+		QString                 errorMessage;
+		bool                    success = false;
+	};
 
-    /**
-     * Synchronously scan a single file.
-     * Invokes ffprobe as a subprocess and parses its JSON output.
-     * Returns a ScanResult; check result.success before using the data.
-     */
-    [[nodiscard]] ScanResult scanFile(const QString& filePath, qint64 scanRunId = -1) const;
+	/**
+	 * Synchronously scan a single file.
+	 * Invokes ffprobe as a subprocess and parses its JSON output.
+	 * Returns a ScanResult; check result.success before using the data.
+	 */
+	[[nodiscard]] ScanResult scanFile(const QString& filePath, qint64 scanRunId = -1) const;
 
-    /**
-     * Validate that the configured ffprobe binary exists and is functional.
-     * Returns the version string on success, empty string on failure.
-     */
-    [[nodiscard]] QString validateFfprobe() const;
+	/**
+	 * Validate that the configured ffprobe binary exists and is functional.
+	 * Returns the version string on success, empty string on failure.
+	 */
+	[[nodiscard]] QString validateFfprobe() const;
 
-    void setFfprobePath(const QString& path) { m_ffprobePath = path; }
-    QString ffprobePath() const { return m_ffprobePath; }
+	void setFfprobePath(const QString& path) { m_ffprobePath = path; }
+	QString ffprobePath() const { return m_ffprobePath; }
 
 private:
-    [[nodiscard]] QByteArray invokeFfprobe(const QString& filePath) const;
-    [[nodiscard]] ScanResult parseJsonOutput(const QByteArray& json,
-                                              const QString& filePath,
-                                              qint64 scanRunId) const;
+	[[nodiscard]] QByteArray invokeFfprobe(const QString& filePath) const;
+	[[nodiscard]] ScanResult parseJsonOutput(const QByteArray& json,
+											  const QString& filePath,
+											  qint64 scanRunId) const;
 
-    static StreamRecord parseStreamObject(const QJsonObject& obj);
-    static QString      detectHdrFormat(const QJsonObject& tags, const QJsonObject& sideData);
-    static QString      normalizeLanguage(const QString& lang);
+	static StreamRecord parseStreamObject(const QJsonObject& obj);
+	static QString      detectHdrFormat(const QJsonObject& tags, const QJsonObject& sideData);
+	static QString      normalizeLanguage(const QString& lang);
 
-    QString m_ffprobePath;
+	QString m_ffprobePath;
 };
 
 } // namespace Mc
