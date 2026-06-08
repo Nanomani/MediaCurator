@@ -30,7 +30,7 @@ endif()
 if(MSVC)
     add_compile_options(/W4 /WX- /utf-8 /MP)
     add_compile_definitions(_UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    # Treat angle-bracket includes (Qt, STL, vcpkg) as external so MSVC
+    # Treat angle-bracket includes (Qt, STL, third-party) as external so MSVC
     # Code Analysis does not flag issues inside third-party headers.
     add_compile_options(/external:anglebrackets /external:W0)
 endif()
@@ -50,8 +50,10 @@ find_package(Qt6 REQUIRED COMPONENTS
 
 qt_standard_project_setup()
 
-# ── Find nlohmann/json (via vcpkg or system) ───────────────────────────────────
-find_package(nlohmann_json CONFIG REQUIRED)
+# ── nlohmann/json (vendored single-header) ────────────────────────────────────
+add_library(nlohmann_json INTERFACE)
+target_include_directories(nlohmann_json INTERFACE "${CMAKE_SOURCE_DIR}/third_party")
+add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
 
 # ── Sub-directories ────────────────────────────────────────────────────────────
 add_subdirectory(src)

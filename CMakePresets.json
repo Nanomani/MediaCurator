@@ -9,8 +9,7 @@
       "architecture": { "value": "x64", "strategy": "set" },
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "Qt6_DIR":             "$env{Qt6_DIR}"
+        "Qt6_DIR": "$env{Qt6_DIR}"
       }
     },
     {

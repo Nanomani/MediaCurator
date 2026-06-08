@@ -6,10 +6,6 @@ build/
 out/
 cmake-build-*/
 
-# vcpkg build artifacts
-vcpkg/
-vcpkg_installed/
-
 # Qt Creator
 *.pro.user
 *.qmlproject.user

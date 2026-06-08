@@ -14,7 +14,7 @@ Jacob @ Lasernet Group (personal project, not work-related)
 - **UI**: Qt6 (Widgets)
 - **Build**: CMake 3.25+ with CPack for installers
 - **Database**: SQLite via Qt's QSqlDatabase
-- **JSON parsing**: nlohmann/json (header-only)
+- **JSON parsing**: nlohmann/json (header-only, vendored at `third_party/nlohmann/json.hpp`)
 - **Metadata**: ffprobe (bundled, LGPL build, invoked as subprocess)
 - **File editing**: mkvmerge (bundled, GPL, invoked as subprocess)
 - **Track classification**: Regex/keyword baseline; ONNX Runtime optional (future)
@@ -35,8 +35,7 @@ cmake --build --preset local-release
 >
 > ```json
 > { "version": 6, "configurePresets": [{ "name": "local-debug", "inherits": "debug",
->   "environment": { "VCPKG_ROOT": "<path>/vcpkg",
->     "Qt6_DIR": "<path>/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6" } }] }
+>   "environment": { "Qt6_DIR": "<path>/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6" } }] }
 > ```
 
 ## Project Structure
@@ -97,5 +96,4 @@ See `src/core/DatabaseManager.cpp` for the full schema. Key tables:
 - Qt 6.8.3 LTS (`msvc2022_64`) — installed at `D:\Development\Environment\Qt\6.8.3`
 - MSVC v18 (shipped with Visual Studio 2026)
 - CMake 3.25+
-- vcpkg standalone at `D:\Development\vcpkg` (not a submodule)
 - ffprobe.exe and mkvmerge.exe placed in `tools/` after first build (see scripts/setup_tools.ps1)
