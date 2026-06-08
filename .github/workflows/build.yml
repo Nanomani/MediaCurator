@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ main ]
 
-# Opt into Node.js 24 for all actions (required before June 16 2026 when 20 is dropped).
+# Opt into Node.js 24 for all actions (required before June 16 2026).
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -20,6 +20,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Install Qt
+      id: install_qt
       uses: jurplel/install-qt-action@v4
       with:
         version: '6.8.3'
@@ -28,18 +29,20 @@ jobs:
         arch: 'win64_msvc2022_64'
         cache: true
 
+    - name: Set up MSVC (x64)
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
     - name: Configure CMake
-      # No -G flag — CMake auto-selects the highest VS version installed.
-      # Works on both the current windows-2022 (VS17) and the incoming
-      # windows-2025-vs2026 (VS18) runner without any change needed here.
-      run: cmake -B build -A x64
+      run: cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DQt6_DIR="${{ steps.install_qt.outputs.Qt6_DIR }}"
 
     - name: Build
-      run: cmake --build build --config Release --parallel
+      run: cmake --build build --parallel
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: MediaCurator-Windows-Release
-        path: build/bin/Release/
+        path: build/bin/
         if-no-files-found: error

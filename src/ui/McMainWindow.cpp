@@ -531,7 +531,7 @@ void McMainWindow::setupUi()
 		    ? tr("Edit &IMDb Links (%1 files)…").arg(imdbFiles.size())
 		    : tr("Edit &IMDb Link…");
 		auto* imdbAction = menu.addAction(svgIcon(":/icons/link.svg"), imdbLabel);
-		connect(imdbAction, &QAction::triggered, this, [this, imdbFiles] {
+		connect(imdbAction, &QAction::triggered, this, [this, imdbFiles, firstSelRow] {
 			const int total = imdbFiles.size();
 			for (int i = 0; i < total; ++i) {
 				const FileRecord& f = imdbFiles[i];
@@ -563,6 +563,17 @@ void McMainWindow::setupUi()
 					DatabaseManager::instance().updateDisplayTitle(f.id, title);
 			}
 			m_listView->viewport()->repaint();
+			// onPosterReady() calls applyFilter() (beginResetModel) synchronously when
+			// the "missing IMDb" filter is active, clearing the scroll position.
+			// Restore selection to the nearest surviving row if it was wiped.
+			if (m_listView->selectionModel()->selectedIndexes().isEmpty()) {
+				const int n = m_listModel->rowCount();
+				if (n > 0) {
+					const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
+					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+					m_listView->scrollTo(next);
+				}
+			}
 		});
 
 		menu.addSeparator();
