@@ -439,7 +439,6 @@ void ImdbSearchDialog::onSearch()
 
 		if (results.isEmpty()) {
 			setStatusText(tr("No results found."));
-			if (m_autoSelectSingle) { setWindowOpacity(1.0); raise(); activateWindow(); }
 			return;
 		}
 
@@ -509,16 +508,30 @@ void ImdbSearchDialog::onSearch()
 			connect(pr, &QNetworkReply::finished, pr, &QObject::deleteLater);
 			connect(pr, &QNetworkReply::finished, this, [this, pr, row]() {
 				m_prefetchByRow.remove(row);
-				if (pr->error() != QNetworkReply::NoError) return;
-				const QString id = QJsonDocument::fromJson(pr->readAll()).object()["imdb_id"].toString();
-				if (id.isEmpty()) return;
-				m_imdbIdByRow[row] = id;
-				if (row < m_resultsList->count())
-					m_resultsList->item(row)->setData(Qt::UserRole + 4, id);
+				const QString id = pr->error() == QNetworkReply::NoError
+				    ? QJsonDocument::fromJson(pr->readAll()).object()["imdb_id"].toString()
+				    : QString{};
+
+				if (!id.isEmpty()) {
+					m_imdbIdByRow[row] = id;
+					if (row < m_resultsList->count())
+						m_resultsList->item(row)->setData(Qt::UserRole + 4, id);
+				}
+
 				if (m_resultsList->currentRow() == row) {
-					m_imdbIdEdit->setText(id);
 					m_imdbIdEdit->setEnabled(true);
-					if (m_acceptAfterFetch) { m_acceptAfterFetch = false; accept(); }
+					if (!id.isEmpty()) {
+						m_imdbIdEdit->setText(id);
+						if (m_acceptAfterFetch) { m_acceptAfterFetch = false; accept(); }
+					} else {
+						// No IMDb ID available — clear the waiting state so Save isn't stuck disabled.
+						m_acceptAfterFetch = false;
+						m_imdbIdEdit->clear();
+						m_btnSave->setEnabled(false);
+					}
+				} else if (m_acceptAfterFetch && id.isEmpty()) {
+					// This row was the auto-select target but is no longer current — give up waiting.
+					m_acceptAfterFetch = false;
 				}
 			});
 		}
@@ -538,20 +551,15 @@ void ImdbSearchDialog::onSearch()
 			}
 			m_resultsList->setCurrentRow(bestRow);
 
-			if (m_autoSelectSingle) {
-				if (m_resultsList->count() == 1) {
-					// Exactly one result — silently accept without showing the dialog.
-					m_acceptAfterFetch = true;
-					if (!m_imdbIdByRow.value(bestRow).isEmpty()) {
-						m_imdbIdEdit->setText(m_imdbIdByRow.value(bestRow));
-						m_acceptAfterFetch = false;
-						accept();
-					}
+			if (m_autoSelectSingle && m_resultsList->count() == 1) {
+				// Exactly one result — auto-accept once the IMDb ID arrives.
+				const QString cachedId = m_imdbIdByRow.value(bestRow);
+				if (!cachedId.isEmpty()) {
+					m_imdbIdEdit->setText(cachedId);
+					accept();
 				} else {
-					// Multiple results, or user manually searched — show the dialog.
-					setWindowOpacity(1.0);
-					raise();
-					activateWindow();
+					// IMDb ID still in-flight — accept as soon as the prefetch lands.
+					m_acceptAfterFetch = true;
 				}
 			}
 		}

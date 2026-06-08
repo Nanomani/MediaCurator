@@ -29,6 +29,7 @@ struct FileRecord {
 	bool        needsRescan = false;
 	QString     containerTitle;   // title from ffprobe format tags; may be absent or junk
 	QString     displayTitle;     // TMDB/user-assigned override; preferred over all others
+	bool        ignored = false;  // user-hidden; excluded from library view by default
 };
 
 // Mirrors the 'streams' table row
@@ -161,6 +162,8 @@ public:
 	bool promoteJobsToQueued(const QList<qint64>& jobIds);
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);
 	bool updateDisplayTitle(qint64 fileId, const QString& title);
+	bool setFileIgnored(qint64 fileId, bool ignored);
+	void deleteJobsForFile(qint64 fileId);
 	QList<JobRecord> queuedJobs() const;
 	QList<JobRecord> allJobs() const;
 	QList<JobDisplayRecord> allJobsForPanel() const;

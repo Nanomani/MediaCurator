@@ -76,6 +76,8 @@ public slots:
 	void setFilterText(const QString& text);
 	void setFilterHasRemovals(bool on);
 	void setFilterMissingImdb(bool on);
+	void setFilterIgnoredOnly(bool on);   // true = show only ignored; false = hide ignored
+	void setIgnoredBatch(const QList<qint64>& fileIds, bool ignored); // update flag in-place + refilter
 	void setQuickFilters(quint32 flags);
 	void setSortOrder(int order);
 	void setRatingFilter(double minRating, double maxRating);
@@ -101,6 +103,7 @@ private:
 	QString                   m_filterText;
 	bool                      m_filterHasRemovals  = false;
 	bool                      m_filterMissingImdb  = false;
+	bool                      m_filterIgnoredOnly  = false;
 	quint32                   m_quickFilters       = QF_None;
 	int                       m_sortOrder          = SortByName;
 	double                    m_ratingMin          = 0.0;

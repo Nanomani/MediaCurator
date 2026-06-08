@@ -565,6 +565,7 @@ void McJobPanel::setupUi()
 		// full selection rather than only the right-clicked item.
 		QList<qint64> selectedProposedJobIds;
 		QList<qint64> selectedQueuedJobIds;
+		QList<qint64> selectedRemovableJobIds; // all non-running selected jobs
 		{
 			QSet<int> seen;
 			for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes()) {
@@ -575,12 +576,15 @@ void McJobPanel::setupUi()
 				if (jid <= 0) continue;
 				if (st == QLatin1String("proposed")) selectedProposedJobIds << jid;
 				else if (st == QLatin1String("queued")) selectedQueuedJobIds << jid;
+				if (st != QLatin1String("running")) selectedRemovableJobIds << jid;
 			}
 			// Ensure the right-clicked item is included even if outside the selection.
 			if (status == QLatin1String("proposed") && !selectedProposedJobIds.contains(jobId))
 				selectedProposedJobIds.prepend(jobId);
 			else if (status == QLatin1String("queued") && !selectedQueuedJobIds.contains(jobId))
 				selectedQueuedJobIds.prepend(jobId);
+			if (status != QLatin1String("running") && !selectedRemovableJobIds.contains(jobId))
+				selectedRemovableJobIds.prepend(jobId);
 		}
 
 		if (status == QLatin1String("proposed")) {
@@ -661,6 +665,19 @@ void McJobPanel::setupUi()
 				QDesktopServices::openUrl(
 					QUrl::fromLocalFile(QFileInfo(fileOpt->path).absolutePath()));
 		});
+
+		if (!selectedRemovableJobIds.isEmpty()) {
+			menu.addSeparator();
+			const QString removeLabel = selectedRemovableJobIds.size() > 1
+			    ? tr("Remove %1 Jobs from Queue").arg(selectedRemovableJobIds.size())
+			    : tr("Remove from Queue");
+			auto* removeAct = menu.addAction(svgIcon(":/icons/delete.svg"), removeLabel);
+			connect(removeAct, &QAction::triggered, this, [this, selectedRemovableJobIds] {
+				auto& db = DatabaseManager::instance();
+				for (qint64 jid : selectedRemovableJobIds) db.deleteJob(jid);
+				refresh();
+			});
+		}
 
 		menu.exec(m_listView->viewport()->mapToGlobal(pos));
 	});

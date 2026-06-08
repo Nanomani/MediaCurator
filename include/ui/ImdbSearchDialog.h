@@ -37,9 +37,9 @@ public:
 	double     selectedVoteAverage()      const;
 	int        selectedVoteCount()        const;
 
-	// When set, exec() runs the dialog invisibly (opacity 0) and auto-accepts if the
-	// search returns exactly one result. Falls back to opaque+visible if ambiguous.
-	void setAutoSelectSingle(bool on) { m_autoSelectSingle = on; if (on) setWindowOpacity(0.0); }
+	// When set, auto-accepts if the search returns exactly one result with a valid
+	// IMDb ID. Shows the dialog normally if the result is ambiguous or the fetch fails.
+	void setAutoSelectSingle(bool on) { m_autoSelectSingle = on; }
 
 	// Adds "Skip" and "Cancel all" buttons and shows progress in the title.
 	// Call before exec(). current/total are 1-based (e.g. "3 of 10").

@@ -291,6 +291,13 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE files ADD COLUMN display_title TEXT DEFAULT ''");
 	}
 
+	// Migration: add ignored flag to files
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE files ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0");
+		// Ignore errors — means the column already exists
+	}
+
 	// One-time migration: reset 'no_poster' records to 'pending' so that newly
 	// bundled tools (ffmpeg, mkvextract) get a chance to extract embedded art.
 	// Uses a preferences key so this only runs once per installation upgrade.
@@ -424,6 +431,7 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 	r.containerTitle   = q.value("container_title").toString();
 	r.displayTitle     = q.value("display_title").toString();
+	r.ignored          = q.value("ignored").toInt() != 0;
 	return r;
 }
 
@@ -450,6 +458,7 @@ std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 	r.containerTitle   = q.value("container_title").toString();
 	r.displayTitle     = q.value("display_title").toString();
+	r.ignored          = q.value("ignored").toInt() != 0;
 	return r;
 }
 
@@ -473,6 +482,7 @@ QList<FileRecord> DatabaseManager::allFiles() const
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 		r.containerTitle   = q.value("container_title").toString();
 		r.displayTitle     = q.value("display_title").toString();
+		r.ignored          = q.value("ignored").toInt() != 0;
 		result.append(r);
 	}
 	return result;
@@ -502,6 +512,7 @@ QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit) const
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 		r.containerTitle   = q.value("container_title").toString();
 		r.displayTitle     = q.value("display_title").toString();
+		r.ignored          = q.value("ignored").toInt() != 0;
 		result.append(r);
 	}
 	return result;
@@ -870,6 +881,23 @@ bool DatabaseManager::updateDisplayTitle(qint64 fileId, const QString& title)
 	q.addBindValue(title);
 	q.addBindValue(fileId);
 	return q.exec();
+}
+
+bool DatabaseManager::setFileIgnored(qint64 fileId, bool ignored)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE files SET ignored=? WHERE id=?");
+	q.addBindValue(ignored ? 1 : 0);
+	q.addBindValue(fileId);
+	return q.exec();
+}
+
+void DatabaseManager::deleteJobsForFile(qint64 fileId)
+{
+	QSqlQuery q(connection());
+	q.prepare("DELETE FROM jobs WHERE file_id=? AND status != 'running'");
+	q.addBindValue(fileId);
+	q.exec();
 }
 
 QList<JobRecord> DatabaseManager::queuedJobs() const

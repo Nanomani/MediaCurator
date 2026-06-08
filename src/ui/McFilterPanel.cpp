@@ -106,6 +106,7 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	m_statusCombo->addItem(tr("All files"),      0);           // 1
 	m_statusCombo->addItem(tr("With proposals"), 1);           // 2
 	m_statusCombo->addItem(tr("Missing poster"), 2);           // 3
+	m_statusCombo->addItem(tr("Ignored files"),  3);           // 4
 	if (auto* m = qobject_cast<QStandardItemModel*>(m_statusCombo->model()))
 		if (auto* item = m->item(0))
 			item->setEnabled(false);

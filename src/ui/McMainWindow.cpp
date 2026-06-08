@@ -38,6 +38,7 @@
 #include <QCloseEvent>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -453,6 +454,45 @@ void McMainWindow::setupUi()
 
 		menu.addSeparator();
 
+		// Ignore / Unignore — collect all selected file IDs for batch operation.
+		QList<qint64> selectedFileIds;
+		{
+			QSet<int> seen;
+			for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes()) {
+				if (seen.contains(si.row())) continue;
+				seen.insert(si.row());
+				const qint64 fid = si.data(McFileListModel::FileRole).value<FileRecord>().id;
+				if (fid > 0) selectedFileIds << fid;
+			}
+			if (!selectedFileIds.contains(file.id)) selectedFileIds.prepend(file.id);
+		}
+		if (file.ignored) {
+			const QString unignoreLabel = selectedFileIds.size() > 1
+			    ? tr("&Unignore %1 Files").arg(selectedFileIds.size())
+			    : tr("&Unignore File");
+			auto* unignoreAction = menu.addAction(svgIcon(":/icons/visibility_off.svg"), unignoreLabel);
+			connect(unignoreAction, &QAction::triggered, this, [this, selectedFileIds] {
+				auto& db = DatabaseManager::instance();
+				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, false);
+				m_listModel->setIgnoredBatch(selectedFileIds, false);
+				m_statusLabel->setText(tr("Unignored %1 file(s)").arg(selectedFileIds.size()));
+			});
+		} else {
+			const QString ignoreLabel = selectedFileIds.size() > 1
+			    ? tr("&Ignore %1 Files").arg(selectedFileIds.size())
+			    : tr("&Ignore File");
+			auto* ignoreAction = menu.addAction(svgIcon(":/icons/block.svg"), ignoreLabel);
+			connect(ignoreAction, &QAction::triggered, this, [this, selectedFileIds] {
+				auto& db = DatabaseManager::instance();
+				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, true);
+				m_listModel->setIgnoredBatch(selectedFileIds, true);
+				m_statusLabel->setText(tr("Ignored %1 file(s) — switch to \"Ignored files\" filter to manage them")
+				    .arg(selectedFileIds.size()));
+			});
+		}
+
+		menu.addSeparator();
+
 		auto* refreshPosterAction = menu.addAction(svgIcon(":/icons/refresh.svg"),
 		                                            tr("Refresh &Poster"));
 		connect(refreshPosterAction, &QAction::triggered, this, [file] {
@@ -519,6 +559,52 @@ void McMainWindow::setupUi()
 				QUrl::fromLocalFile(QFileInfo(file.path).absolutePath()));
 		});
 
+		menu.addSeparator();
+
+		const QString removeLabel = imdbFiles.size() > 1
+		    ? tr("Remove %1 Files from Library…").arg(imdbFiles.size())
+		    : tr("Remove from Library…");
+		auto* removeAction = menu.addAction(svgIcon(":/icons/delete.svg"), removeLabel);
+		connect(removeAction, &QAction::triggered, this, [this, imdbFiles] {
+			const int n = imdbFiles.size();
+			const QString title = n > 1
+			    ? tr("Remove %1 Files").arg(n)
+			    : tr("Remove \"%1\"").arg(imdbFiles.first().filename);
+			const QString body = n > 1
+			    ? tr("%1 files will be removed from MediaCurator. "
+			         "You can re-add them by scanning the folder again.").arg(n)
+			    : tr("\"%1\" will be removed from MediaCurator. "
+			         "You can re-add it by scanning the folder again.").arg(imdbFiles.first().filename);
+
+			QMessageBox dlg(this);
+			dlg.setWindowTitle(title);
+			dlg.setText(body);
+			dlg.setIcon(QMessageBox::Question);
+			auto* deleteBtn = dlg.addButton(tr("Delete File from Disk"), QMessageBox::DestructiveRole);
+			auto* removeBtn = dlg.addButton(tr("Remove from Library Only"), QMessageBox::AcceptRole);
+			dlg.addButton(QMessageBox::Cancel);
+			dlg.setDefaultButton(QMessageBox::Cancel);
+			dlg.exec();
+
+			if (dlg.clickedButton() != deleteBtn && dlg.clickedButton() != removeBtn)
+				return;
+
+			const bool deleteFromDisk = (dlg.clickedButton() == deleteBtn);
+			auto& db = DatabaseManager::instance();
+			int removed = 0;
+			for (const FileRecord& f : imdbFiles) {
+				db.deleteJobsForFile(f.id);
+				if (!db.deleteFile(f.id)) continue;
+				if (deleteFromDisk) QFile::remove(f.path);
+				m_listModel->removeEntry(f.id);
+				++removed;
+			}
+			m_jobPanel->refresh();
+			m_statusLabel->setText(deleteFromDisk
+			    ? tr("Deleted %1 file(s) from disk and library").arg(removed)
+			    : tr("Removed %1 file(s) from library").arg(removed));
+		});
+
 		menu.exec(m_listView->viewport()->mapToGlobal(pos));
 	});
 
@@ -550,6 +636,7 @@ void McMainWindow::setupUi()
 	        this, [this](int status) {
 		m_listModel->setFilterHasRemovals(status == 1);
 		m_listModel->setFilterMissingImdb(status == 2);
+		m_listModel->setFilterIgnoredOnly(status == 3);
 	});
 	connect(m_filterPanel, &McFilterPanel::quickFiltersChanged,
 	        m_listModel, &McFileListModel::setQuickFilters);

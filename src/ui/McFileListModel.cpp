@@ -36,6 +36,13 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 		if (!found) return false;
 	}
 
+	// ── Ignored filter ────────────────────────────────────────────────────────
+	if (m_filterIgnoredOnly) {
+		if (!e.file.ignored) return false;
+	} else {
+		if (e.file.ignored) return false;
+	}
+
 	// ── Status filters ────────────────────────────────────────────────────────
 	if (m_filterHasRemovals && !m_filesWithJobs.contains(e.file.id))
 		return false;
@@ -318,6 +325,21 @@ void McFileListModel::setFilterMissingImdb(bool on)
 {
 	if (m_filterMissingImdb == on) return;
 	m_filterMissingImdb = on;
+	applyFilter();
+}
+
+void McFileListModel::setFilterIgnoredOnly(bool on)
+{
+	if (m_filterIgnoredOnly == on) return;
+	m_filterIgnoredOnly = on;
+	applyFilter();
+}
+
+void McFileListModel::setIgnoredBatch(const QList<qint64>& fileIds, bool ignored)
+{
+	const QSet<qint64> idSet(fileIds.begin(), fileIds.end());
+	for (auto& e : m_allEntries)
+		if (idSet.contains(e.file.id)) e.file.ignored = ignored;
 	applyFilter();
 }
 

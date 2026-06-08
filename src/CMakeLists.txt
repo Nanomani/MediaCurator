@@ -149,6 +149,8 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/vlc.svg
         resources/icons/dollar.svg
         resources/icons/lightning_qr.png
+        resources/icons/block.svg
+        resources/icons/visibility_off.svg
 )
 
 # Copy tools/ directory next to the executable after build
