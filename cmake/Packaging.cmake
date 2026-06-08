@@ -16,6 +16,10 @@ set(CPACK_PACKAGE_EXECUTABLES     "MediaCurator;MediaCurator")
 # ── Windows — NSIS installer (.exe) ───────────────────────────────────────────
 if(WIN32)
     set(CPACK_GENERATOR "NSIS")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/src/resources/icons/app_icon.ico")
+        set(CPACK_NSIS_MUI_ICON   "${CMAKE_SOURCE_DIR}/src/resources/icons/app_icon.ico")
+        set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}/src/resources/icons/app_icon.ico")
+    endif()
     set(CPACK_NSIS_DISPLAY_NAME        "MediaCurator ${PROJECT_VERSION}")
     set(CPACK_NSIS_PACKAGE_NAME        "MediaCurator")
     set(CPACK_NSIS_URL_INFO_ABOUT      "https://github.com/bleze/MediaCurator")
@@ -23,10 +27,8 @@ if(WIN32)
     set(CPACK_NSIS_MODIFY_PATH         ON)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
-    # Create a Start Menu shortcut
-    set(CPACK_NSIS_MENU_LINKS
-        "MediaCurator.exe" "MediaCurator"
-    )
+    # Desktop shortcut (the installer will offer a checkbox; this sets the default)
+    set(CPACK_CREATE_DESKTOP_LINKS     "MediaCurator")
 
 # ── macOS — DragNDrop (.dmg) ───────────────────────────────────────────────────
 elseif(APPLE)

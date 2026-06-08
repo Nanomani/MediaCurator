@@ -96,7 +96,12 @@ set(MC_HEADERS
 )
 
 if(WIN32)
-    list(APPEND MC_SOURCES resources/app.rc)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/app_icon.ico")
+        list(APPEND MC_SOURCES resources/app.rc)
+    else()
+        message(STATUS "MediaCurator: app_icon.ico not found — exe will have no embedded icon. "
+                       "Run scripts/generate_icon.ps1 to create it.")
+    endif()
 endif()
 
 qt_add_executable(MediaCurator

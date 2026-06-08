@@ -1,4 +1,5 @@
 #include "ui/McManageFoldersDialog.h"
+#include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 #include "ui/SvgIcon.h"
 
@@ -16,7 +17,6 @@
 #include <QMessageBox>
 #include <QModelIndex>
 #include <QPalette>
-#include <QSettings>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QToolBar>
@@ -100,8 +100,7 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 
 void McManageFoldersDialog::loadFolders()
 {
-	QSettings s;
-	const QStringList roots = s.value("scan/roots").toStringList();
+	const QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
 
 	m_table->setRowCount(roots.size());
 
@@ -123,8 +122,7 @@ void McManageFoldersDialog::loadFolders()
 
 void McManageFoldersDialog::onAddFolder()
 {
-	QSettings s;
-	QStringList roots = s.value("scan/roots").toStringList();
+	QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
 	const QString hint = roots.isEmpty() ? QString() : roots.last();
 
 	const QString raw    = QFileDialog::getExistingDirectory(
@@ -140,7 +138,7 @@ void McManageFoldersDialog::onAddFolder()
 	}
 
 	roots << folder;
-	s.setValue("scan/roots", roots);
+	AppSettings::instance().setValue("scan/roots", roots);
 	m_anyAdded = true;
 
 	// Add the row immediately — count starts at 0 and rises as the scan
@@ -196,15 +194,14 @@ void McManageFoldersDialog::onRemoveSelected()
 	    != QMessageBox::Yes)
 		return;
 
-	QSettings s;
-	QStringList roots = s.value("scan/roots").toStringList();
+	QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
 
 	for (const QString& folder : std::as_const(folders)) {
 		DatabaseManager::instance().removeFilesUnderPath(folder);
 		roots.removeAll(folder);
 	}
 
-	s.setValue("scan/roots", roots);
+	AppSettings::instance().setValue("scan/roots", roots);
 	m_anyRemoved = true;
 
 	QList<int> rows;

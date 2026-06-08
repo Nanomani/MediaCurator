@@ -1,21 +1,13 @@
 ﻿#include "core/UserProfile.h"
+#include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 
-#include <QDir>
-#include <QFile>
-#include <QJsonDocument>
 #include <QJsonArray>
-#include <QStandardPaths>
+#include <QJsonDocument>
 
 namespace Mc {
 
 static const char* PREF_KEY = "user_profile_json";   // legacy DB key — read once for migration
-
-static QString settingsFilePath()
-{
-	return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-	       + QStringLiteral("/settings.json");
-}
 
 UserProfile::UserProfile(QObject* parent)
 	: QObject(parent)
@@ -295,26 +287,28 @@ bool UserProfile::fromJson(const QJsonObject& json)
 
 void UserProfile::save()
 {
-	const QString path = settingsFilePath();
-	QDir().mkpath(QFileInfo(path).absolutePath());
-	QFile f(path);
-	if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
-		f.write(QJsonDocument(toJson()).toJson(QJsonDocument::Indented));
+	AppSettings::instance().setProfileSection(toJson());
 }
 
 bool UserProfile::load()
 {
-	// Primary: JSON file in AppData (survives DB deletion).
-	const QString path = settingsFilePath();
-	QFile f(path);
-	if (f.exists() && f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-		const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-		if (!doc.isNull() && fromJson(doc.object()))
+	// Primary: settings.json "profile" section (new format).
+	const QJsonObject profileJson = AppSettings::instance().profileSection();
+	if (!profileJson.isEmpty() && fromJson(profileJson))
+		return true;
+
+	// Migration: old settings.json was a flat UserProfile object (pre-AppSettings
+	// restructure). AppSettings already read the file; if the root contains a known
+	// UserProfile key it's the old format — migrate it in place.
+	const QJsonObject raw = AppSettings::instance().rawRoot();
+	if (raw.contains(QStringLiteral("understood_languages"))) {
+		if (fromJson(raw)) {
+			save();   // re-saves under the "profile" key in new format
 			return true;
+		}
 	}
 
-	// Migration fallback: if the old DB entry exists, read it and re-save to the
-	// new location so subsequent launches no longer need the DB.
+	// Legacy: old DB-based storage (earliest format, before JSON file).
 	const QString stored = DatabaseManager::instance().getPref(PREF_KEY);
 	if (!stored.isEmpty()) {
 		const QJsonDocument doc = QJsonDocument::fromJson(stored.toUtf8());

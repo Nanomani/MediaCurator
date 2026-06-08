@@ -1,4 +1,5 @@
 #include "ui/McJobPanel.h"
+#include "core/AppSettings.h"
 #include "ui/McBulkSummaryDialog.h"
 #include "ui/McFilterPanel.h"
 #include "ui/McJobCardDelegate.h"
@@ -15,7 +16,6 @@
 #include <QComboBox>
 #include <QFrame>
 #include <QToolButton>
-#include <QSettings>
 #include <QTimer>
 #include <QStyleOptionComboBox>
 #include <QStylePainter>
@@ -327,12 +327,12 @@ void McJobPanel::setupUi()
 	m_statusFilter->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
 
 	m_chkAutoTrack = new QCheckBox(tr("Track running"), this);
-	m_chkAutoTrack->setChecked(QSettings().value("jobPanel/followRunning", true).toBool());
+	m_chkAutoTrack->setChecked(AppSettings::instance().value("jobPanel/followRunning", true).toBool());
 	m_chkAutoTrack->setToolTip(tr(
 	    "When a job starts: switch the filter to Running (if any specific filter is active) "
 	    "or scroll to the running item (if All is active)"));
 	connect(m_chkAutoTrack, &QCheckBox::toggled, this, [](bool on) {
-		QSettings().setValue("jobPanel/followRunning", on);
+		AppSettings::instance().setValue("jobPanel/followRunning", on);
 	});
 
 	// ── Quick-filter pills (same codec/quality set as the library panel) ──────
@@ -516,14 +516,14 @@ void McJobPanel::setupUi()
 	        this, [this](int i) {
 		if (i <= 0) return;   // skip header row
 		const QString v = m_statusFilter->itemData(i).toString();
-		QSettings().setValue("jobPanel/statusFilter", v);
+		AppSettings::instance().setValue("jobPanel/statusFilter", v);
 		m_model->setFilterStatus(v);
 	});
 
 	// Restore the previously saved status filter (block signals so the save slot
 	// does not fire again, then apply the filter to the model manually).
 	{
-		const QString saved = QSettings().value("jobPanel/statusFilter").toString();
+		const QString saved = AppSettings::instance().value("jobPanel/statusFilter").toString();
 		if (!saved.isEmpty()) {
 			m_statusFilter->blockSignals(true);
 			for (int i = 0; i < m_statusFilter->count(); ++i) {

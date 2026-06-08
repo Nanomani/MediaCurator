@@ -1,7 +1,9 @@
 ﻿#include "ui/McMainWindow.h"
+#include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
 
 #include <QApplication>
+#include <QSettings>
 #include <QIcon>
 #include <QCoreApplication>
 #include <QColor>
@@ -63,6 +65,10 @@ int main(int argc, char* argv[])
 	app.setApplicationVersion("0.1.0");
 	app.setOrganizationName("Bleze Software");
 	app.setOrganizationDomain("mediacurator.app");
+
+	// Keep remaining QSettings (geometry / window state) in a plain INI file
+	// rather than the Windows registry.
+	QSettings::setDefaultFormat(QSettings::IniFormat);
 
 	// Pre-render the SVG at every size Windows uses so the taskbar, Alt+Tab,
 	// and title bar all get a sharp icon rather than a single blurry rescale.
@@ -127,6 +133,8 @@ int main(int argc, char* argv[])
 	app.processEvents();   // ensure the splash paints before we block on DB
 
 	// ── Startup ───────────────────────────────────────────────────────────────
+	Mc::AppSettings::instance().load();   // must be before any UI reads settings
+
 	if (!Mc::DatabaseManager::instance().open()) {
 		splash.hide();
 		QMessageBox::critical(nullptr, "MediaCurator",

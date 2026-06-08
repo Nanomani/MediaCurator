@@ -1,4 +1,5 @@
 ﻿#include "ui/McMainWindow.h"
+#include "core/AppSettings.h"
 #include "ui/ImdbSearchDialog.h"
 #include "ui/McFilterPanel.h"
 #include "ui/McManageFoldersDialog.h"
@@ -199,8 +200,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
 	});
 
-	m_savedJobPanelHeight = s.value("mainWindow/jobPanelHeight", 0).toInt();
-	m_jobPanelPinned     = s.value("mainWindow/queueHidden",    false).toBool();
+	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
+	m_jobPanelPinned     = AppSettings::instance().value("mainWindow/queueHidden",    false).toBool();
 
 	setupActions();
 	setupUi();
@@ -843,7 +844,7 @@ void McMainWindow::setupActions()
 	m_actToggleQueue->setIcon(svgIcon(":/icons/playlist_add_check.svg"));
 	connect(m_actToggleQueue, &QAction::toggled, this, [this](bool checked) {
 		m_jobPanelPinned = !checked;
-		QSettings().setValue("mainWindow/queueHidden", m_jobPanelPinned);
+		AppSettings::instance().setValue("mainWindow/queueHidden", m_jobPanelPinned);
 		updateJobPanelVisibility();
 	});
 }
@@ -1037,11 +1038,12 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	}
 
 	QSettings s;
-	s.setValue("mainWindow/geometry",        saveGeometry());
-	s.setValue("mainWindow/state",           saveState());
-	s.setValue("mainWindow/splitter",        m_splitter->saveState());
-	s.setValue("mainWindow/jobPanelHeight",  m_savedJobPanelHeight);
-	s.setValue("mainWindow/queueHidden",     m_jobPanelPinned);
+	s.setValue("mainWindow/geometry", saveGeometry());
+	s.setValue("mainWindow/state",    saveState());
+	s.setValue("mainWindow/splitter", m_splitter->saveState());
+
+	AppSettings::instance().setValue("mainWindow/jobPanelHeight", m_savedJobPanelHeight);
+	AppSettings::instance().setValue("mainWindow/queueHidden",    m_jobPanelPinned);
 	event->accept();
 }
 
@@ -1069,13 +1071,7 @@ void McMainWindow::onScanFolder()
 		return;
 	}
 
-	QSettings s;
-	QStringList roots = s.value("scan/roots").toStringList();
-	// Migrate from legacy single-folder key
-	if (roots.isEmpty()) {
-		const QString legacy = s.value("scan/lastFolder").toString();
-		if (!legacy.isEmpty()) roots << legacy;
-	}
+	QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
 	const QString hint = roots.isEmpty() ? QString() : roots.last();
 
 	const QString raw = QFileDialog::getExistingDirectory(
@@ -1087,8 +1083,7 @@ void McMainWindow::onScanFolder()
 
 	if (!roots.contains(folder))
 		roots << folder;
-	s.setValue("scan/roots", roots);
-	s.remove("scan/lastFolder");
+	AppSettings::instance().setValue("scan/roots", roots);
 
 	createScanWorker(folder);
 }
@@ -1101,17 +1096,7 @@ void McMainWindow::onScanLibrary()
 		return;
 	}
 
-	QSettings s;
-	QStringList roots = s.value("scan/roots").toStringList();
-	// Migrate from legacy single-folder key
-	if (roots.isEmpty()) {
-		const QString legacy = s.value("scan/lastFolder").toString();
-		if (!legacy.isEmpty()) {
-			roots << legacy;
-			s.setValue("scan/roots", roots);
-			s.remove("scan/lastFolder");
-		}
-	}
+	QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
 
 	if (roots.isEmpty()) {
 		// No folders configured yet — redirect to Add Folder
@@ -1262,8 +1247,7 @@ void McMainWindow::startLibraryLoader()
 	// File count uses the previous-session value for the "illusion" (could be thousands).
 	// Job count is a fast COUNT(*) — the jobs table is small and this is O(1).
 	{
-		QSettings s;
-		const int cachedFiles = s.value("library/lastFileCount", m_listModel->fileCount()).toInt();
+		const int cachedFiles = AppSettings::instance().value("library/lastFileCount", m_listModel->fileCount()).toInt();
 		const int totalJobs   = db.totalJobCount();
 		QString text = tr("%1 files in library").arg(cachedFiles);
 		if (totalJobs > 0)
@@ -1324,7 +1308,7 @@ void McMainWindow::startLibraryLoader()
 		updateActionStates();
 		updateSavedLabel();
 		const int jobTotal = DatabaseManager::instance().totalJobCount();
-		QSettings().setValue("library/lastFileCount", total);
+		AppSettings::instance().setValue("library/lastFileCount", total);
 		// Don't overwrite the status label if a remux job is actively running.
 		if (!m_jobQueue->hasActiveJob()) {
 			const int shown = m_listModel->fileCount();
@@ -1547,11 +1531,12 @@ void McMainWindow::updateSavedLabel()
 
 void McMainWindow::updateActionStates()
 {
-	QSettings s;
-	const bool hasRoots = !s.value("scan/roots").toStringList().isEmpty();
+	const bool hasRoots = !AppSettings::instance().value("scan/roots").toStringList().isEmpty();
 	const bool hasFiles = m_listModel->totalCount() > 0;
+	const bool hasJobs  = !DatabaseManager::instance().allJobsForPanel().isEmpty();
 	m_actScanLibrary->setEnabled(hasRoots);
 	m_actAnalyze->setEnabled(hasFiles);
+	if (m_actToggleQueue) m_actToggleQueue->setEnabled(hasJobs);
 }
 
 void McMainWindow::updateJobPanelVisibility(bool forceShow)
@@ -1560,7 +1545,7 @@ void McMainWindow::updateJobPanelVisibility(bool forceShow)
 
 	if (forceShow && hasJobs) {
 		m_jobPanelPinned = false;
-		QSettings().setValue("mainWindow/queueHidden", false);
+		AppSettings::instance().setValue("mainWindow/queueHidden", false);
 	}
 
 	const bool shouldShow = hasJobs && !m_jobPanelPinned;
