@@ -100,9 +100,18 @@ if(WIN32)
 endif()
 
 qt_add_executable(MediaCurator
-    WIN32    # Windows: no console window in release
+    WIN32           # Windows: no console window in release
+    MACOSX_BUNDLE   # macOS: produce a .app bundle
     ${MC_SOURCES}
     ${MC_HEADERS}
+)
+
+set_target_properties(MediaCurator PROPERTIES
+    MACOSX_BUNDLE_BUNDLE_NAME        "MediaCurator"
+    MACOSX_BUNDLE_GUI_IDENTIFIER     "com.lasernetgroup.mediacurator"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_BUNDLE_VERSION       "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_COPYRIGHT          "© 2024 Jacob Pedersen / Lasernet Group"
 )
 
 target_include_directories(MediaCurator PRIVATE
@@ -189,6 +198,65 @@ if(WIN32)
     endif()
 endif()
 
-install(TARGETS MediaCurator
-    RUNTIME DESTINATION bin
-)
+# macOS: bundle Qt frameworks into the .app
+if(APPLE)
+    find_program(MACDEPLOYQT macdeployqt HINTS "${Qt6_DIR}/../../../bin")
+    if(MACDEPLOYQT)
+        add_custom_command(TARGET MediaCurator POST_BUILD
+            COMMAND "${MACDEPLOYQT}" "$<TARGET_BUNDLE_DIR:MediaCurator>"
+            COMMENT "Running macdeployqt to bundle Qt frameworks"
+        )
+    endif()
+endif()
+
+# ── Install rules (used by CPack and cmake --install) ─────────────────────────
+if(WIN32)
+    install(TARGETS MediaCurator RUNTIME DESTINATION .)
+    # Re-run windeployqt against the staged install so the installer gets Qt DLLs
+    if(WINDEPLOYQT)
+        install(CODE "
+            message(STATUS \"Running windeployqt for install...\")
+            execute_process(COMMAND
+                \"${WINDEPLOYQT}\"
+                    --no-translations
+                    --no-system-d3d-compiler
+                    \"\${CMAKE_INSTALL_PREFIX}/MediaCurator.exe\"
+            )
+        ")
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
+        install(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/" DESTINATION tools)
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/data")
+        install(DIRECTORY "${CMAKE_SOURCE_DIR}/data/" DESTINATION data)
+    endif()
+elseif(APPLE)
+    install(TARGETS MediaCurator BUNDLE DESTINATION .)
+    # Re-run macdeployqt against the staged .app so the DMG gets Qt frameworks
+    if(MACDEPLOYQT)
+        install(CODE "
+            message(STATUS \"Running macdeployqt for install...\")
+            execute_process(COMMAND
+                \"${MACDEPLOYQT}\"
+                    \"\${CMAKE_INSTALL_PREFIX}/MediaCurator.app\"
+                    -verbose=1
+            )
+        ")
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
+        install(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/"
+            DESTINATION MediaCurator.app/Contents/MacOS/tools)
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/data")
+        install(DIRECTORY "${CMAKE_SOURCE_DIR}/data/"
+            DESTINATION MediaCurator.app/Contents/MacOS/data)
+    endif()
+else()
+    install(TARGETS MediaCurator RUNTIME DESTINATION bin)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
+        install(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/" DESTINATION lib/MediaCurator/tools)
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/data")
+        install(DIRECTORY "${CMAKE_SOURCE_DIR}/data/" DESTINATION lib/MediaCurator/data)
+    endif()
+endif()

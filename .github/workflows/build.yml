@@ -44,11 +44,14 @@ jobs:
     - name: Build
       run: cmake --build build --parallel
 
-    - name: Upload artifact
+    - name: Package (NSIS installer)
+      run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
+
+    - name: Upload installer
       uses: actions/upload-artifact@v4
       with:
-        name: MediaCurator-Windows-Release
-        path: build/bin/
+        name: MediaCurator-Windows-Installer
+        path: build/packages/MediaCurator-*.exe
         if-no-files-found: error
 
   build-macos:
@@ -74,11 +77,14 @@ jobs:
     - name: Build
       run: cmake --build build --parallel
 
-    - name: Upload artifact
+    - name: Package (DMG)
+      run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
+
+    - name: Upload installer
       uses: actions/upload-artifact@v4
       with:
-        name: MediaCurator-macOS-Release
-        path: build/bin/
+        name: MediaCurator-macOS-DMG
+        path: build/packages/MediaCurator-*.dmg
         if-no-files-found: error
 
   build-linux:
@@ -129,9 +135,12 @@ jobs:
     - name: Build
       run: cmake --build build --parallel
 
-    - name: Upload artifact
+    - name: Package (DEB)
+      run: cpack --config build/CPackConfig.cmake -C Release -B build/packages
+
+    - name: Upload installer
       uses: actions/upload-artifact@v4
       with:
-        name: MediaCurator-Linux-Release
-        path: build/bin/
+        name: MediaCurator-Linux-DEB
+        path: build/packages/MediaCurator-*.deb
         if-no-files-found: error
