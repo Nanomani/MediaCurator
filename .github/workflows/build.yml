@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
+# Opt into Node.js 24 for all actions (required before June 16 2026 when 20 is dropped).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -25,7 +29,10 @@ jobs:
         cache: true
 
     - name: Configure CMake
-      run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      # No -G flag — CMake auto-selects the highest VS version installed.
+      # Works on both the current windows-2022 (VS17) and the incoming
+      # windows-2025-vs2026 (VS18) runner without any change needed here.
+      run: cmake -B build -A x64
 
     - name: Build
       run: cmake --build build --config Release --parallel

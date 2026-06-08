@@ -566,11 +566,13 @@ void McJobPanel::setupUi()
 		QList<qint64> selectedProposedJobIds;
 		QList<qint64> selectedQueuedJobIds;
 		QList<qint64> selectedRemovableJobIds; // all non-running selected jobs
+		int firstSelRow = idx.row();
 		{
 			QSet<int> seen;
 			for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes()) {
 				if (seen.contains(si.row())) continue;
 				seen.insert(si.row());
+				firstSelRow = qMin(firstSelRow, si.row());
 				const qint64  jid = si.data(McJobListModel::JobIdRole).toLongLong();
 				const QString st  = si.data(McJobListModel::StatusRole).toString();
 				if (jid <= 0) continue;
@@ -592,11 +594,17 @@ void McJobPanel::setupUi()
 			    ? tr("&Queue %1 Files").arg(selectedProposedJobIds.size())
 			    : tr("&Queue File");
 			auto* queueAct = menu.addAction(svgIcon(":/icons/add_to_queue.svg"), queueLabel);
-			connect(queueAct, &QAction::triggered, this, [this, selectedProposedJobIds] {
+			connect(queueAct, &QAction::triggered, this, [this, selectedProposedJobIds, firstSelRow] {
 				DatabaseManager::instance().promoteJobsToQueued(selectedProposedJobIds);
 				for (qint64 jid : selectedProposedJobIds)
 					m_model->updateJob(jid, "queued");
 				updateFooter();
+				const int n = m_model->rowCount();
+				if (n > 0) {
+					const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
+					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+					m_listView->scrollTo(next);
+				}
 			});
 			menu.addSeparator();
 		} else if (status == QLatin1String("queued")) {
@@ -604,12 +612,18 @@ void McJobPanel::setupUi()
 			    ? tr("&Unqueue %1 Files").arg(selectedQueuedJobIds.size())
 			    : tr("&Unqueue File");
 			auto* unqueueAct = menu.addAction(svgIcon(":/icons/undo.svg"), unqueueLabel);
-			connect(unqueueAct, &QAction::triggered, this, [this, selectedQueuedJobIds] {
+			connect(unqueueAct, &QAction::triggered, this, [this, selectedQueuedJobIds, firstSelRow] {
 				for (qint64 jid : selectedQueuedJobIds) {
 					DatabaseManager::instance().updateJobStatus(jid, "proposed");
 					m_model->updateJob(jid, "proposed");
 				}
 				updateFooter();
+				const int n = m_model->rowCount();
+				if (n > 0) {
+					const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
+					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+					m_listView->scrollTo(next);
+				}
 			});
 			menu.addSeparator();
 		}
@@ -672,10 +686,16 @@ void McJobPanel::setupUi()
 			    ? tr("Remove %1 Jobs from Queue").arg(selectedRemovableJobIds.size())
 			    : tr("Remove from Queue");
 			auto* removeAct = menu.addAction(svgIcon(":/icons/delete.svg"), removeLabel);
-			connect(removeAct, &QAction::triggered, this, [this, selectedRemovableJobIds] {
+			connect(removeAct, &QAction::triggered, this, [this, selectedRemovableJobIds, firstSelRow] {
 				auto& db = DatabaseManager::instance();
 				for (qint64 jid : selectedRemovableJobIds) db.deleteJob(jid);
 				refresh();
+				const int n = m_model->rowCount();
+				if (n > 0) {
+					const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
+					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+					m_listView->scrollTo(next);
+				}
 			});
 		}
 
@@ -871,9 +891,11 @@ void McJobPanel::onRemoveSelected()
 	const auto selected = m_listView->selectionModel()->selectedIndexes();
 	QList<qint64> toDelete;
 	QSet<int> seen;
+	int firstSelRow = selected.isEmpty() ? 0 : selected.first().row();
 	for (const QModelIndex& idx : selected) {
 		if (seen.contains(idx.row())) continue;
 		seen.insert(idx.row());
+		firstSelRow = qMin(firstSelRow, idx.row());
 		const QString status = idx.data(McJobListModel::StatusRole).toString();
 		if (status != "running")
 			toDelete << idx.data(McJobListModel::JobIdRole).toLongLong();
@@ -881,6 +903,12 @@ void McJobPanel::onRemoveSelected()
 	auto& db = DatabaseManager::instance();
 	for (qint64 id : toDelete) db.deleteJob(id);
 	refresh();
+	const int n = m_model->rowCount();
+	if (n > 0) {
+		const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
+		m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+		m_listView->scrollTo(next);
+	}
 }
 
 void McJobPanel::onStart()

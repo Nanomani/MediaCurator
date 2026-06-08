@@ -425,8 +425,11 @@ void McMainWindow::setupUi()
 		const FileRecord file = idx.data(McFileListModel::FileRole).value<FileRecord>();
 
 		QSet<int> selRows;
-		for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes())
+		int firstSelRow = idx.row();
+		for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes()) {
 			selRows.insert(si.row());
+			firstSelRow = qMin(firstSelRow, si.row());
+		}
 		const int selCount = selRows.size();
 
 		QMenu menu(this);
@@ -471,23 +474,35 @@ void McMainWindow::setupUi()
 			    ? tr("&Unignore %1 Files").arg(selectedFileIds.size())
 			    : tr("&Unignore File");
 			auto* unignoreAction = menu.addAction(svgIcon(":/icons/visibility_off.svg"), unignoreLabel);
-			connect(unignoreAction, &QAction::triggered, this, [this, selectedFileIds] {
+			connect(unignoreAction, &QAction::triggered, this, [this, selectedFileIds, firstSelRow] {
 				auto& db = DatabaseManager::instance();
 				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, false);
 				m_listModel->setIgnoredBatch(selectedFileIds, false);
 				m_statusLabel->setText(tr("Unignored %1 file(s)").arg(selectedFileIds.size()));
+				const int n = m_listModel->rowCount();
+				if (n > 0) {
+					const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
+					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+					m_listView->scrollTo(next);
+				}
 			});
 		} else {
 			const QString ignoreLabel = selectedFileIds.size() > 1
 			    ? tr("&Ignore %1 Files").arg(selectedFileIds.size())
 			    : tr("&Ignore File");
 			auto* ignoreAction = menu.addAction(svgIcon(":/icons/block.svg"), ignoreLabel);
-			connect(ignoreAction, &QAction::triggered, this, [this, selectedFileIds] {
+			connect(ignoreAction, &QAction::triggered, this, [this, selectedFileIds, firstSelRow] {
 				auto& db = DatabaseManager::instance();
 				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, true);
 				m_listModel->setIgnoredBatch(selectedFileIds, true);
 				m_statusLabel->setText(tr("Ignored %1 file(s) — switch to \"Ignored files\" filter to manage them")
 				    .arg(selectedFileIds.size()));
+				const int n = m_listModel->rowCount();
+				if (n > 0) {
+					const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
+					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+					m_listView->scrollTo(next);
+				}
 			});
 		}
 
@@ -565,7 +580,7 @@ void McMainWindow::setupUi()
 		    ? tr("Remove %1 Files from Library…").arg(imdbFiles.size())
 		    : tr("Remove from Library…");
 		auto* removeAction = menu.addAction(svgIcon(":/icons/delete.svg"), removeLabel);
-		connect(removeAction, &QAction::triggered, this, [this, imdbFiles] {
+		connect(removeAction, &QAction::triggered, this, [this, imdbFiles, firstSelRow] {
 			const int n = imdbFiles.size();
 			const QString title = n > 1
 			    ? tr("Remove %1 Files").arg(n)
@@ -603,6 +618,12 @@ void McMainWindow::setupUi()
 			m_statusLabel->setText(deleteFromDisk
 			    ? tr("Deleted %1 file(s) from disk and library").arg(removed)
 			    : tr("Removed %1 file(s) from library").arg(removed));
+			const int remaining = m_listModel->rowCount();
+			if (remaining > 0) {
+				const QModelIndex next = m_listModel->index(qMin(firstSelRow, remaining - 1), 0);
+				m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+				m_listView->scrollTo(next);
+			}
 		});
 
 		menu.exec(m_listView->viewport()->mapToGlobal(pos));
