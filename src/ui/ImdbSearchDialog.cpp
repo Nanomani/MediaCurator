@@ -1,4 +1,5 @@
 ﻿#include "ui/ImdbSearchDialog.h"
+#include "core/AppSettings.h"
 
 #include <QDialogButtonBox>
 #include <QFileInfo>
@@ -190,7 +191,7 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	setMinimumWidth(480);
 
 	{
-		QSettings s;
+		QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 		const QByteArray geo = s.value("imdbSearchDialog/geometry").toByteArray();
 		if (!geo.isEmpty())
 			restoreGeometry(geo);
@@ -305,7 +306,8 @@ ImdbSearchDialog::~ImdbSearchDialog()
 
 void ImdbSearchDialog::done(int result)
 {
-	QSettings().setValue("imdbSearchDialog/geometry", saveGeometry());
+	QSettings(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat)
+	    .setValue("imdbSearchDialog/geometry", saveGeometry());
 	QDialog::done(result);
 }
 

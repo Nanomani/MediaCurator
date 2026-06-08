@@ -24,6 +24,7 @@ public:
 	static AppSettings& instance();
 
 	static QString filePath();
+	static QString geometryFilePath();
 
 	void load();
 	void save();

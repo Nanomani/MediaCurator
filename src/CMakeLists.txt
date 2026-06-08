@@ -26,6 +26,7 @@ set(MC_SOURCES
     ui/McManageFoldersDialog.cpp
     ui/McPreviewDialog.cpp
     ui/McBulkSummaryDialog.cpp
+    ui/McWhatIfDialog.cpp
     ui/McJobStatsBar.cpp
     ui/ImdbSearchDialog.cpp
     ui/SvgIcon.cpp
@@ -34,6 +35,7 @@ set(MC_SOURCES
     engine/RuleEngine.cpp
     engine/ActionEngine.cpp
     engine/AnalyzeWorker.cpp
+    engine/SimulateWorker.cpp
     engine/JobQueue.cpp
     engine/RemuxJob.cpp
     engine/PosterManager.cpp
@@ -65,6 +67,7 @@ set(MC_HEADERS
     ../include/engine/RuleEngine.h
     ../include/engine/ActionEngine.h
     ../include/engine/AnalyzeWorker.h
+    ../include/engine/SimulateWorker.h
     ../include/engine/JobQueue.h
     ../include/engine/RemuxJob.h
     ../include/engine/TrackDecision.h
@@ -89,6 +92,7 @@ set(MC_HEADERS
     ../include/ui/McManageFoldersDialog.h
     ../include/ui/McPreviewDialog.h
     ../include/ui/McBulkSummaryDialog.h
+    ../include/ui/McWhatIfDialog.h
     ../include/ui/McJobStatsBar.h
     ../include/ui/McSettingsDialog.h
     ../include/ui/ImdbSearchDialog.h

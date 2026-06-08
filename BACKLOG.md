@@ -102,12 +102,12 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 - [x] `[P2]` **Filter bar — extended search + quick-filter pills + sort** — text search now covers filename, parent folder, and stream metadata (codec name/profile/HDR format/title); pill toggles for 4K / DV / HDR / Atmos / TrueHD / DTS-HD / DTS:X with Material icons; status filter combo (All / With proposals / Missing poster); sort combo (Name / Newest / Oldest / Largest); AND between pill groups, OR within the audio group; `created_ms` already in DB
 - [x] `[P1]` scripts/setup_tools.ps1 — auto-download ffprobe + mkvmerge portable (Windows)
 - [ ] `[P1]` scripts/setup_tools.sh — same for Linux/macOS
-- [ ] `[P2]` CPack NSIS installer (Windows) — bundles tools/, Qt DLLs, MSVC redistributable
-- [ ] `[P2]` CPack DMG (macOS)
-- [ ] `[P2]` CPack AppImage (Linux)
+- [x] `[P2]` CPack NSIS installer (Windows) — bundles Qt DLLs, creates desktop + Start Menu shortcuts, installer/uninstaller icon
+- [x] `[P2]` CPack DMG (macOS) — DragNDrop bundle via macdeployqt
+- [x] `[P2]` CPack DEB (Linux) — Debian package with Qt6 runtime dependencies
 - [x] `[P2]` About dialog — version, license info, Ko-fi / GitHub Sponsors link
 - [x] `[P2]` GitHub Actions CI — Windows build + test on push
-- [ ] `[P3]` macOS/Linux CI jobs
+- [x] `[P3]` macOS/Linux CI jobs — all three platforms build and package on push
 - [ ] `[P3]` Automatic update check (compare GitHub release tag)
 
 ---
@@ -132,7 +132,7 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 - [ ] `[P3]` Export library to CSV/JSON for external scripting
 - [ ] `[P3]` Dark mode / theme support
 - [ ] `[P3]` Keyboard shortcuts for power users
-- [ ] `[P3]` "What if" simulation — shows library size after applying policy to everything
+- [x] `[P3]` **"What if" simulation** — `McWhatIfDialog` + `SimulateWorker`; runs RuleEngine across entire library in-memory (no jobs written); shows files affected / tracks removed / ~GB saved with breakdown by removal reason and language; "Analyze Library →" button promotes straight to analysis
 
 ---
 

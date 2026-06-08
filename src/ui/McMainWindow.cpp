@@ -11,6 +11,8 @@
 #include "ui/McSettingsDialog.h"
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
+#include "engine/SimulateWorker.h"
+#include "ui/McWhatIfDialog.h"
 #include "engine/JobQueue.h"
 #include "engine/PosterManager.h"
 #include "engine/RuleEngine.h"
@@ -181,7 +183,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	setWindowTitle("MediaCurator");
 	setMinimumSize(900, 600);
 
-	QSettings s;
+	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	const bool firstLaunch = !s.contains("mainWindow/geometry");
 	if (!firstLaunch) {
 		restoreGeometry(s.value("mainWindow/geometry").toByteArray());
@@ -480,12 +482,14 @@ void McMainWindow::setupUi()
 				for (qint64 fid : selectedFileIds) db.setFileIgnored(fid, false);
 				m_listModel->setIgnoredBatch(selectedFileIds, false);
 				m_statusLabel->setText(tr("Unignored %1 file(s)").arg(selectedFileIds.size()));
-				const int n = m_listModel->rowCount();
-				if (n > 0) {
-					const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
-					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
-					m_listView->scrollTo(next);
-				}
+				QTimer::singleShot(0, this, [this, firstSelRow] {
+					const int n = m_listModel->rowCount();
+					if (n > 0) {
+						const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
+						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+						m_listView->scrollTo(next, QAbstractItemView::EnsureVisible);
+					}
+				});
 			});
 		} else {
 			const QString ignoreLabel = selectedFileIds.size() > 1
@@ -498,12 +502,14 @@ void McMainWindow::setupUi()
 				m_listModel->setIgnoredBatch(selectedFileIds, true);
 				m_statusLabel->setText(tr("Ignored %1 file(s) — switch to \"Ignored files\" filter to manage them")
 				    .arg(selectedFileIds.size()));
-				const int n = m_listModel->rowCount();
-				if (n > 0) {
-					const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
-					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
-					m_listView->scrollTo(next);
-				}
+				QTimer::singleShot(0, this, [this, firstSelRow] {
+					const int n = m_listModel->rowCount();
+					if (n > 0) {
+						const QModelIndex next = m_listModel->index(qMin(firstSelRow, n - 1), 0);
+						m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+						m_listView->scrollTo(next, QAbstractItemView::EnsureVisible);
+					}
+				});
 			});
 		}
 
@@ -827,6 +833,12 @@ void McMainWindow::setupActions()
 	m_actAnalyze->setIcon(svgIcon(":/icons/manage_search.svg"));
 	connect(m_actAnalyze, &QAction::triggered, this, &McMainWindow::onAnalyzeLibrary);
 
+	m_actSimulate = new QAction(tr("Simulate Policy…"), this);
+	m_actSimulate->setShortcut(QKeySequence("Ctrl+Shift+W"));
+	m_actSimulate->setToolTip(tr("Preview what the current policy would remove — no jobs are created (Ctrl+Shift+W)"));
+	m_actSimulate->setIcon(svgIcon(":/icons/visibility.svg"));
+	connect(m_actSimulate, &QAction::triggered, this, &McMainWindow::onSimulate);
+
 	m_actSettings = new QAction(tr("Settings…"), this);
 	m_actSettings->setToolTip(tr("Edit language preferences and external tool paths"));
 	m_actSettings->setIcon(svgIcon(":/icons/settings.svg"));
@@ -881,6 +893,7 @@ void McMainWindow::setupToolBar()
 	tb->addAction(m_actScanFolder);
 	tb->addAction(m_actScanLibrary);
 	tb->addAction(m_actAnalyze);
+	tb->addAction(m_actSimulate);
 	tb->addAction(m_actToggleQueue);
 	tb->addSeparator();
 	tb->addAction(m_actRefresh);
@@ -939,6 +952,7 @@ void McMainWindow::setupMenuBar()
 	// Tools menu
 	QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
 	toolsMenu->addAction(m_actAnalyze);
+	toolsMenu->addAction(m_actSimulate);
 	toolsMenu->addSeparator();
 	toolsMenu->addAction(m_actSettings);
 
@@ -1037,7 +1051,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 			m_savedJobPanelHeight = sz[1];
 	}
 
-	QSettings s;
+	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	s.setValue("mainWindow/geometry", saveGeometry());
 	s.setValue("mainWindow/state",    saveState());
 	s.setValue("mainWindow/splitter", m_splitter->saveState());
@@ -1493,6 +1507,69 @@ void McMainWindow::onAnalyzeFinished(int /*analyzed*/, int created)
 	m_statusLabel->setText(tr("Analyze complete — %1 job(s) proposed").arg(created));
 }
 
+void McMainWindow::onSimulate()
+{
+	if (m_simulateThread || m_analyzeThread) return;
+
+	const auto files = DatabaseManager::instance().allFiles();
+	if (files.isEmpty()) return;
+
+	m_actAnalyze->setEnabled(false);
+	m_actSimulate->setEnabled(false);
+
+	m_whatIfDialog = new McWhatIfDialog(files.size(), this);
+	m_whatIfDialog->setWindowModality(Qt::ApplicationModal);
+
+	m_simulateThread = new QThread(this);
+	m_simulateWorker = new SimulateWorker(files, m_profile);
+	m_simulateWorker->moveToThread(m_simulateThread);
+
+	connect(m_simulateThread, &QThread::started,         m_simulateWorker, &SimulateWorker::run);
+	connect(m_simulateWorker, &SimulateWorker::finished, m_simulateThread, &QThread::quit);
+	// Worker is deleted here, NOT from SimulateWorker::finished. Connecting deleteLater()
+	// to finished() is a direct connection (same thread), so the object is freed on the
+	// worker thread before the queued onSimulateFinished slot on the main thread runs and
+	// reads decisions() — use-after-free. QThread::finished fires only after the thread
+	// has fully exited, by which point onSimulateFinished has already been delivered.
+	connect(m_simulateThread, &QThread::finished, this, [this] {
+		if (m_simulateWorker) {
+			m_simulateWorker->deleteLater();
+			m_simulateWorker = nullptr;
+		}
+		m_simulateThread->deleteLater();
+		m_simulateThread = nullptr;
+	});
+
+	connect(m_simulateWorker, &SimulateWorker::progress, m_whatIfDialog, &McWhatIfDialog::onProgress);
+	connect(m_simulateWorker, &SimulateWorker::finished, this, &McMainWindow::onSimulateFinished);
+
+	// If the user closes the dialog (Cancel / Escape / X), cancel the worker and
+	// null the pointer immediately — onSimulateFinished may still fire from the
+	// queued signal if the worker had already emitted finished() before the dialog
+	// was closed, and a stale pointer would crash.
+	connect(m_whatIfDialog, &QDialog::rejected, this, [this] {
+		m_whatIfDialog = nullptr;
+		if (m_simulateWorker) m_simulateWorker->cancel();
+	});
+
+	// "Analyze Library →" button in results
+	connect(m_whatIfDialog, &McWhatIfDialog::analyzeRequested, this, &McMainWindow::onAnalyzeLibrary);
+
+	m_simulateThread->start();
+	m_whatIfDialog->show();
+}
+
+void McMainWindow::onSimulateFinished(int /*analyzed*/, int /*filesAffected*/)
+{
+	// Copy decisions before anything can free the worker (QThread::finished fires later).
+	const auto decisions = m_simulateWorker ? m_simulateWorker->decisions() : QList<FileDecision>{};
+	if (m_whatIfDialog && !m_whatIfDialog->isHidden())
+		m_whatIfDialog->onFinished(decisions);
+	// m_simulateWorker is intentionally not nulled here — QThread::finished owns cleanup.
+	m_whatIfDialog = nullptr;
+	updateActionStates();
+}
+
 void McMainWindow::setScanningState(bool scanning)
 {
 	m_progressBar->setVisible(scanning);
@@ -1508,6 +1585,7 @@ void McMainWindow::setScanningState(bool scanning)
 	if (scanning) {
 		m_actScanLibrary->setEnabled(false);
 		m_actAnalyze->setEnabled(false);
+		m_actSimulate->setEnabled(false);
 	} else {
 		updateActionStates();
 	}
@@ -1539,6 +1617,7 @@ void McMainWindow::updateActionStates()
 	const bool hasJobs  = !DatabaseManager::instance().allJobsForPanel().isEmpty();
 	m_actScanLibrary->setEnabled(hasRoots);
 	m_actAnalyze->setEnabled(hasFiles);
+	m_actSimulate->setEnabled(hasFiles);
 	if (m_actToggleQueue) m_actToggleQueue->setEnabled(hasJobs);
 }
 

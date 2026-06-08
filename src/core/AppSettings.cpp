@@ -72,6 +72,13 @@ QString AppSettings::filePath()
 	       + QStringLiteral("/settings.json");
 }
 
+// static
+QString AppSettings::geometryFilePath()
+{
+	return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+	       + QStringLiteral("/mediacurator.ini");
+}
+
 void AppSettings::load()
 {
 	QFile f(filePath());

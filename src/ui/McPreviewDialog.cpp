@@ -1,5 +1,6 @@
 ﻿#include "ui/McPreviewDialog.h"
 #include "ui/McJobStatsBar.h"
+#include "core/AppSettings.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -115,7 +116,7 @@ McPreviewDialog::McPreviewDialog(const FileDecision& decision, QWidget* parent)
 
 void McPreviewDialog::done(int result)
 {
-	QSettings s;
+	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	s.setValue("previewDialog/geometry", saveGeometry());
 	if (m_splitter)
 		s.setValue("previewDialog/splitter", m_splitter->saveState());
@@ -127,7 +128,7 @@ void McPreviewDialog::setupUi(const FileDecision& decision)
 	setWindowTitle(tr("Preview — %1").arg(decision.file.filename));
 	setMinimumSize(860, 500);
 
-	QSettings s;
+	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
 	if (const QByteArray geo = s.value("previewDialog/geometry").toByteArray(); !geo.isEmpty())
 		restoreGeometry(geo);
 	else

@@ -3,7 +3,6 @@
 #include "core/DatabaseManager.h"
 
 #include <QApplication>
-#include <QSettings>
 #include <QIcon>
 #include <QCoreApplication>
 #include <QColor>
@@ -66,9 +65,8 @@ int main(int argc, char* argv[])
 	app.setOrganizationName("Bleze Software");
 	app.setOrganizationDomain("mediacurator.app");
 
-	// Keep remaining QSettings (geometry / window state) in a plain INI file
-	// rather than the Windows registry.
-	QSettings::setDefaultFormat(QSettings::IniFormat);
+	// Geometry/window state is stored in an INI file via explicit paths constructed
+	// from AppSettings::geometryFilePath() — not the registry, not a default-path INI.
 
 	// Pre-render the SVG at every size Windows uses so the taskbar, Alt+Tab,
 	// and title bar all get a sharp icon rather than a single blurry rescale.

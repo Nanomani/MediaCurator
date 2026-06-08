@@ -21,6 +21,8 @@ class JobQueue;
 class McFileListModel;
 class McFilterPanel;
 class McJobPanel;
+class McWhatIfDialog;
+class SimulateWorker;
 class ScanWorker;
 class UserProfile;
 
@@ -50,6 +52,8 @@ private slots:
 	void onDonate();
 	void onSettings();
 	void onShowPreview(qint64 fileId);
+	void onSimulate();
+	void onSimulateFinished(int analyzed, int filesAffected);
 
 private:
 	void setupUi();
@@ -75,6 +79,7 @@ private:
 	QAction*     m_actScanLibrary   = nullptr;
 	QAction*     m_actRemoveFolder  = nullptr;
 	QAction*     m_actAnalyze       = nullptr;
+	QAction*     m_actSimulate      = nullptr;
 	QAction*     m_actSettings      = nullptr;
 	QAction*     m_actRefresh       = nullptr;
 	QAction*  m_actToggleQueue   = nullptr;
@@ -98,6 +103,9 @@ private:
 	ScanWorker*      m_scanWorker      = nullptr;
 	QThread*         m_analyzeThread   = nullptr;
 	AnalyzeWorker*   m_analyzeWorker   = nullptr;
+	QThread*         m_simulateThread  = nullptr;
+	SimulateWorker*  m_simulateWorker  = nullptr;
+	McWhatIfDialog*  m_whatIfDialog    = nullptr;
 	int              m_analyzeJobCount     = 0;
 	int              m_savedJobPanelHeight = 0;
 	bool             m_jobPanelPinned     = false;
