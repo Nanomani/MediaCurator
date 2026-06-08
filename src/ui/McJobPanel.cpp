@@ -679,6 +679,13 @@ void McJobPanel::refresh()
 	emit jobsChanged(m_model->rowCount());
 }
 
+void McJobPanel::refreshPaged(int limit)
+{
+	m_model->reloadPaged(limit);
+	updateFooter();
+	emit jobsChanged(m_model->rowCount());
+}
+
 void McJobPanel::scrollToFileJob(qint64 fileId)
 {
 	// Switch to the "Proposed" filter so the new job is visible.

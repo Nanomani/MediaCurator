@@ -42,6 +42,7 @@ public:
 	Qt::ItemFlags flags(const QModelIndex& index) const override;
 
 	void reload();
+	void reloadPaged(int limit);
 
 	/** Update status + savedBytes for a single job without full reload. */
 	void updateJob(qint64 jobId, const QString& status, qint64 savedBytes = -1);

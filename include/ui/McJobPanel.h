@@ -24,6 +24,7 @@ public:
 
 	void setJobQueue(JobQueue* queue);
 	void refresh();
+	void refreshPaged(int limit);
 
 	// After analyzeSingleFile creates a proposed job, call this to switch the
 	// filter to Proposed, select the new row and scroll it into view.

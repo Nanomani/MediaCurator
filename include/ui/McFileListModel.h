@@ -52,6 +52,9 @@ public:
 
 	void reload();
 	void reloadFile(qint64 fileId);
+	void initMeta(const QHash<qint64, QString>& posterPaths,
+	              const QHash<qint64, QString>& imdbIds,
+	              const QSet<qint64>& filesWithJobs);
 	void applyFileUpdate(const Mc::FileRecord& file, const QList<Mc::StreamRecord>& streams);
 	void removeEntry(qint64 fileId);
 	void refreshJobFilter();        // re-query proposed jobs and reapply filter

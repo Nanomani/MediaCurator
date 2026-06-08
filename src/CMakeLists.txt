@@ -5,6 +5,7 @@ set(MC_SOURCES
     core/AppSettings.cpp
     core/DatabaseManager.cpp
     core/ExternalTools.cpp
+    core/LibraryLoader.cpp
     core/UserProfile.cpp
 
     # Scanner
@@ -49,6 +50,7 @@ set(MC_HEADERS
     # Core
     ../include/core/DatabaseManager.h
     ../include/core/AppSettings.h
+    ../include/core/LibraryLoader.h
     ../include/core/UserProfile.h
     ../include/core/ExternalTools.h
 

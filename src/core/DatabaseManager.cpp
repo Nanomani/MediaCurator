@@ -454,6 +454,79 @@ QList<FileRecord> DatabaseManager::allFiles() const
 	return result;
 }
 
+QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit) const
+{
+	QList<FileRecord> result;
+	QSqlQuery q(connection());
+	q.prepare("SELECT * FROM files ORDER BY filename LIMIT ? OFFSET ?");
+	q.addBindValue(limit);
+	q.addBindValue(offset);
+	if (!q.exec()) return result;
+	while (q.next()) {
+		FileRecord r;
+		r.id               = q.value("id").toLongLong();
+		r.path             = q.value("path").toString();
+		r.filename         = q.value("filename").toString();
+		r.sizeBytes        = q.value("size_bytes").toLongLong();
+		r.mtimeMs          = q.value("mtime_ms").toLongLong();
+		r.createdMs        = q.value("created_ms").toLongLong();
+		r.container        = q.value("container").toString();
+		r.durationSec      = q.value("duration_s").toDouble();
+		r.overallBitrate   = q.value("overall_bitrate").toLongLong();
+		r.originalLanguage = q.value("original_language").toString();
+		r.scanTime         = q.value("scan_time").toLongLong();
+		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
+		result.append(r);
+	}
+	return result;
+}
+
+QHash<qint64, QList<StreamRecord>> DatabaseManager::streamsForFiles(const QList<qint64>& fileIds) const
+{
+	QHash<qint64, QList<StreamRecord>> result;
+	if (fileIds.isEmpty()) return result;
+
+	QStringList ph;
+	ph.reserve(fileIds.size());
+	for (int i = 0; i < fileIds.size(); ++i) ph << QStringLiteral("?");
+
+	QSqlQuery q(connection());
+	q.prepare(QStringLiteral("SELECT * FROM streams WHERE file_id IN (%1) ORDER BY file_id, stream_index")
+	          .arg(ph.join(',')));
+	for (qint64 id : fileIds) q.addBindValue(id);
+	if (!q.exec()) return result;
+
+	while (q.next()) {
+		StreamRecord s;
+		s.id                = q.value("id").toLongLong();
+		s.fileId            = q.value("file_id").toLongLong();
+		s.streamIndex       = q.value("stream_index").toInt();
+		s.codecType         = q.value("codec_type").toString();
+		s.codecName         = q.value("codec_name").toString();
+		s.language          = q.value("language").toString();
+		s.title             = q.value("title").toString();
+		s.trackType         = q.value("track_type").toString();
+		s.typeConfidence    = q.value("type_confidence").toDouble();
+		s.channels          = q.value("channels").toInt();
+		s.sampleRate        = q.value("sample_rate").toInt();
+		s.bitRate           = q.value("bit_rate").toLongLong();
+		s.width             = q.value("width").toInt();
+		s.height            = q.value("height").toInt();
+		s.hdrFormat         = q.value("hdr_format").toString();
+		s.isDefault         = q.value("is_default").toInt() != 0;
+		s.isForced          = q.value("is_forced").toInt() != 0;
+		s.isHearingImpaired = q.value("is_hearing_impaired").toInt() != 0;
+		s.isVisualImpaired  = q.value("is_visual_impaired").toInt() != 0;
+		s.pixelFormat       = q.value("pixel_format").toString();
+		s.frameRate         = q.value("frame_rate").toString();
+		s.codecLevel        = q.value("codec_level").toString();
+		s.codecProfile      = q.value("codec_profile").toString();
+		s.extraJson         = q.value("extra_json").toString();
+		result[s.fileId].append(s);
+	}
+	return result;
+}
+
 QList<FileRecord> DatabaseManager::filesUnderPath(const QString& rootPath) const
 {
 	QList<FileRecord> result;
@@ -827,6 +900,25 @@ QList<JobRecord> DatabaseManager::allJobs() const
 	return result;
 }
 
+static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& result)
+{
+	while (q.next()) {
+		Mc::JobDisplayRecord r;
+		r.jobId       = q.value(0).toLongLong();
+		r.fileId      = q.value(1).toLongLong();
+		r.summary     = q.value(2).toString();
+		r.status      = q.value(3).toString();
+		r.savedBytes  = q.value(4).toLongLong();
+		r.createdAt   = q.value(5).toLongLong();
+		r.filename    = q.value(6).toString();
+		r.filePath    = q.value(7).toString();
+		r.sizeBytes   = q.value(8).toLongLong();
+		r.imdbId      = q.value(9).toString();
+		r.durationSec = q.value("duration_s").toDouble();
+		result.append(r);
+	}
+}
+
 QList<JobDisplayRecord> DatabaseManager::allJobsForPanel() const
 {
 	QList<JobDisplayRecord> result;
@@ -843,22 +935,36 @@ QList<JobDisplayRecord> DatabaseManager::allJobsForPanel() const
 	)");
 	if (!q.isActive())
 		qWarning() << "allJobsForPanel query failed:" << q.lastError().text();
-	while (q.next()) {
-		JobDisplayRecord r;
-		r.jobId      = q.value(0).toLongLong();
-		r.fileId     = q.value(1).toLongLong();
-		r.summary    = q.value(2).toString();
-		r.status     = q.value(3).toString();
-		r.savedBytes = q.value(4).toLongLong();
-		r.createdAt  = q.value(5).toLongLong();
-		r.filename   = q.value(6).toString();
-		r.filePath   = q.value(7).toString();
-		r.sizeBytes  = q.value(8).toLongLong();
-		r.imdbId     = q.value(9).toString();
-		r.durationSec = q.value("duration_s").toDouble();
-		result.append(r);
-	}
+	parseJobDisplayRecord(q, result);
 	return result;
+}
+
+QList<JobDisplayRecord> DatabaseManager::allJobsForPanelPaged(int limit, const QString& statusFilter) const
+{
+	QList<JobDisplayRecord> result;
+	QSqlQuery q(connection());
+	const QString where = statusFilter.isEmpty() ? QString{} : QStringLiteral(" WHERE j.status = ?");
+	q.prepare(QStringLiteral(R"(
+		SELECT j.id, j.file_id, j.summary, j.status, j.saved_bytes, j.created_at,
+			   f.filename, f.path, COALESCE(f.size_bytes, 0) AS size_bytes,
+			   COALESCE(pc.imdb_id, '') AS imdb_id,
+			   COALESCE(f.duration_s, 0.0) AS duration_s
+		FROM jobs j
+		LEFT JOIN files f ON j.file_id = f.id
+		LEFT JOIN poster_cache pc ON j.file_id = pc.file_id
+	)") + where + QStringLiteral(" ORDER BY size_bytes ASC, j.created_at ASC LIMIT ?"));
+	if (!statusFilter.isEmpty()) q.addBindValue(statusFilter);
+	q.addBindValue(limit);
+	q.exec();
+	parseJobDisplayRecord(q, result);
+	return result;
+}
+
+int DatabaseManager::totalJobCount() const
+{
+	QSqlQuery q(connection());
+	q.exec("SELECT COUNT(*) FROM jobs");
+	return q.next() ? q.value(0).toInt() : 0;
 }
 
 // ── Preferences ───────────────────────────────────────────────────────────────

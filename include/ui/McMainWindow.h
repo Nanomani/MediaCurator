@@ -57,6 +57,7 @@ private:
 	void setupToolBar();
 	void setupMenuBar();
 	void setupStatusBar();
+	void startLibraryLoader();
 	void createScanWorker(const QString& folderPath);
 	void setScanningState(bool scanning);
 	void updateSavedLabel();

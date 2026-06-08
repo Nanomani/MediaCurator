@@ -129,6 +129,7 @@ public:
 	[[nodiscard]] std::optional<FileRecord> fileById(qint64 id) const;
 	[[nodiscard]] std::optional<FileRecord> fileByPath(const QString& path) const;
 	QList<FileRecord> allFiles() const;
+	QList<FileRecord> allFilesPaged(int offset, int limit) const;
 	QList<FileRecord> filesUnderPath(const QString& rootPath) const;
 	int fileCountUnderPath(const QString& rootPath) const;
 	int removeFilesUnderPath(const QString& rootPath);
@@ -141,6 +142,7 @@ public:
 	QList<StreamRecord> streamsForFile(qint64 fileId) const;
 	QList<StreamRecord> allStreams() const;
 	QHash<qint64, QList<StreamRecord>> allStreamsGrouped() const;
+	QHash<qint64, QList<StreamRecord>> streamsForFiles(const QList<qint64>& fileIds) const;
 
 	// ── Jobs ─────────────────────────────────────────────────────────────────
 	[[nodiscard]] bool   hasActiveJobForFile(qint64 fileId) const;
@@ -155,6 +157,8 @@ public:
 	QList<JobRecord> queuedJobs() const;
 	QList<JobRecord> allJobs() const;
 	QList<JobDisplayRecord> allJobsForPanel() const;
+	QList<JobDisplayRecord> allJobsForPanelPaged(int limit, const QString& statusFilter = {}) const;
+	int                     totalJobCount() const;
 
 	// ── Poster cache ─────────────────────────────────────────────────────────
 	void                        upsertPosterRecord(const PosterRecord& rec);

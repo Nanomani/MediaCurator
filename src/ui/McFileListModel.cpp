@@ -162,6 +162,15 @@ void McFileListModel::reload()
 	applyFilter();
 }
 
+void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
+                               const QHash<qint64, QString>& imdbIds,
+                               const QSet<qint64>& filesWithJobs)
+{
+	m_posterPaths   = posterPaths;
+	m_imdbIds       = imdbIds;
+	m_filesWithJobs = filesWithJobs;
+}
+
 void McFileListModel::refreshJobFilter()
 {
 	m_filesWithJobs.clear();

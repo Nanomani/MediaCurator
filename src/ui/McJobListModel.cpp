@@ -61,6 +61,51 @@ void McJobListModel::reload()
 	applyFilter();
 }
 
+void McJobListModel::reloadPaged(int limit)
+{
+	m_allEntries.clear();
+	m_allCheckStates.clear();
+
+	auto& db = DatabaseManager::instance();
+	m_posterPaths = db.allDonePosterPaths();
+	const auto displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus);
+
+	// allJobs() is fast (just metadata, no streams) — needed for commandArgs/origStreams
+	const auto allJobRecords = db.allJobs();
+	QHash<qint64, QString> argsMap;
+	QHash<qint64, QString> origStreamsMap;
+	QSet<qint64> liveJobIds;
+	for (const JobRecord& j : allJobRecords) {
+		argsMap.insert(j.id, j.commandArgsJson);
+		origStreamsMap.insert(j.id, j.originalStreamsJson);
+		liveJobIds.insert(j.id);
+	}
+
+	for (auto it = m_progress.begin(); it != m_progress.end(); )
+		it = liveJobIds.contains(it.key()) ? ++it : m_progress.erase(it);
+
+	// Single batch query instead of N individual streamsForFile() calls
+	QList<qint64> fileIds;
+	fileIds.reserve(displayJobs.size());
+	for (const JobDisplayRecord& djr : displayJobs) fileIds << djr.fileId;
+	const auto streamsMap = db.streamsForFiles(fileIds);
+
+	for (const JobDisplayRecord& djr : displayJobs) {
+		JobCardEntry e;
+		e.job = djr;
+		const QString& origJson = origStreamsMap.value(djr.jobId);
+		if (djr.status == QLatin1String("done") && !origJson.isEmpty())
+			e.allStreams = streamsFromJson(origJson);
+		else
+			e.allStreams = streamsMap.value(djr.fileId);
+		e.keptStreams = computeKeptStreams(e.allStreams, argsMap.value(djr.jobId));
+		m_allEntries.append(e);
+		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
+	}
+
+	applyFilter();
+}
+
 void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 savedBytes)
 {
 	// Update master list

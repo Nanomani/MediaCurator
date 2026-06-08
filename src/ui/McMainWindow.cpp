@@ -19,6 +19,7 @@
 #include "scanner/ScanWorker.h"
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
+#include "core/LibraryLoader.h"
 #include "core/UserProfile.h"
 
 #ifdef Q_OS_WIN
@@ -314,7 +315,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	connect(&pm, &PosterManager::imdbIdSaved,
 	        m_listModel, &McFileListModel::onImdbIdSaved);
 
-	onRefreshView();
+	startLibraryLoader();
 }
 
 McMainWindow::~McMainWindow()
@@ -356,6 +357,13 @@ void McMainWindow::setupUi()
 		fileDelegate->handlePress(pos, m_listView->visualRect(idx), m_listView->font(), idx);
 	});
 	m_listView->setItemDelegate(fileDelegate);
+
+	// When file data changes (streams updated), the delegate's size cache may
+	// hold a stale height — clear it so sizeHint recomputes for updated rows.
+	connect(m_listModel, &QAbstractItemModel::dataChanged, this, [this] {
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			d->clearSizeCache();
+	});
 
 	// Double-click on the poster column → open IMDb search dialog
 	connect(m_listView, &QAbstractItemView::doubleClicked, this,
@@ -1059,6 +1067,83 @@ void McMainWindow::onRefreshView()
 	if (jobCount > 0)
 		text += tr(", %1 in queue").arg(jobCount);
 	m_statusLabel->setText(text);
+}
+
+void McMainWindow::startLibraryLoader()
+{
+	static constexpr int kFirstPageSize = 25;
+
+	auto& db = DatabaseManager::instance();
+
+	// ── First page: library + queue (synchronous, splash still visible) ───────
+	// Keep this block as lean as possible — only the two paged queries.
+	{
+		const auto firstFiles = db.allFilesPaged(0, kFirstPageSize);
+		if (!firstFiles.isEmpty()) {
+			QList<qint64> ids;
+			ids.reserve(firstFiles.size());
+			for (const auto& f : firstFiles) ids << f.id;
+			const auto streams = db.streamsForFiles(ids);
+			for (const auto& f : firstFiles)
+				m_listModel->applyFileUpdate(f, streams.value(f.id));
+		}
+		m_jobPanel->refreshPaged(kFirstPageSize);   // uses batch streams — fast
+	}
+
+	// ── Status bar: cached file count from settings + live job count ─────────
+	// File count uses the previous-session value for the "illusion" (could be thousands).
+	// Job count is a fast COUNT(*) — the jobs table is small and this is O(1).
+	{
+		QSettings s;
+		const int cachedFiles = s.value("library/lastFileCount", m_listModel->fileCount()).toInt();
+		const int totalJobs   = db.totalJobCount();
+		QString text = tr("%1 files in library").arg(cachedFiles);
+		if (totalJobs > 0)
+			text += tr(", %1 in queue").arg(totalJobs);
+		m_statusLabel->setText(text);
+	}
+
+	updateActionStates();
+
+	// ── Background thread: meta + remaining files + full queue refresh ────────
+	auto* thread = new QThread(this);
+	auto* loader = new LibraryLoader(kFirstPageSize);
+	loader->moveToThread(thread);
+
+	connect(thread, &QThread::started,        loader, &LibraryLoader::run);
+	connect(loader, &LibraryLoader::finished, thread, &QThread::quit);
+	connect(loader, &LibraryLoader::finished, loader, &QObject::deleteLater);
+	connect(thread, &QThread::finished,       thread, &QObject::deleteLater);
+
+	connect(loader, &LibraryLoader::metaReady, this,
+	        [this](const QHash<qint64, QString>& posters,
+	               const QHash<qint64, QString>& imdbIds,
+	               const QSet<qint64>& filesWithJobs) {
+		m_listModel->initMeta(posters, imdbIds, filesWithJobs);
+	});
+
+	connect(loader, &LibraryLoader::fileReady,
+	        m_listModel, &McFileListModel::applyFileUpdate);
+
+	connect(loader, &LibraryLoader::finished, this, [this](int total) {
+		m_jobPanel->refresh();
+		updateJobPanelVisibility(/*forceShow=*/true);
+		updateActionStates();
+		updateSavedLabel();
+		const int jobTotal = DatabaseManager::instance().totalJobCount();
+		QSettings().setValue("library/lastFileCount", total);
+		if (!m_progressBar->isVisible()) {
+			const int shown = m_listModel->fileCount();
+			QString text = shown < total
+			    ? tr("%1 of %2 files").arg(shown).arg(total)
+			    : tr("%1 files in library").arg(total);
+			if (jobTotal > 0)
+				text += tr(", %1 in queue").arg(jobTotal);
+			m_statusLabel->setText(text);
+		}
+	});
+
+	thread->start();
 }
 
 bool McMainWindow::analyzeSingleFile(qint64 fileId)
