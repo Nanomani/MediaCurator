@@ -153,21 +153,27 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/visibility_off.svg
 )
 
-# Copy tools/ directory next to the executable after build
-add_custom_command(TARGET MediaCurator POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/tools"
-        "$<TARGET_FILE_DIR:MediaCurator>/tools"
-    COMMENT "Copying bundled tools to output directory (ffprobe + mkvmerge are the active tools)"
-)
+# Copy tools/ directory next to the executable after build.
+# tools/ is gitignored (populated by scripts/setup_tools.ps1) so it won't exist
+# on a fresh checkout or CI runner — guard to avoid a hard build failure.
+if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
+    add_custom_command(TARGET MediaCurator POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/tools"
+            "$<TARGET_FILE_DIR:MediaCurator>/tools"
+        COMMENT "Copying bundled tools to output directory (ffprobe + mkvmerge)"
+    )
+endif()
 
 # Copy data/ directory (classifier rules, etc.)
-add_custom_command(TARGET MediaCurator POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/data"
-        "$<TARGET_FILE_DIR:MediaCurator>/data"
-    COMMENT "Copying data files to output directory"
-)
+if(EXISTS "${CMAKE_SOURCE_DIR}/data")
+    add_custom_command(TARGET MediaCurator POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/data"
+            "$<TARGET_FILE_DIR:MediaCurator>/data"
+        COMMENT "Copying data files to output directory"
+    )
+endif()
 
 # Windows: deploy Qt DLLs automatically (requires windeployqt in PATH)
 if(WIN32)
