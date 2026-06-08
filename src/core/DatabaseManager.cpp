@@ -582,6 +582,13 @@ QList<FileRecord> DatabaseManager::filesUnderPath(const QString& rootPath) const
 	return result;
 }
 
+int DatabaseManager::fileCount() const
+{
+	QSqlQuery q(connection());
+	q.exec("SELECT COUNT(*) FROM files");
+	return q.next() ? q.value(0).toInt() : 0;
+}
+
 int DatabaseManager::fileCountUnderPath(const QString& rootPath) const
 {
 	QSqlQuery q(connection());

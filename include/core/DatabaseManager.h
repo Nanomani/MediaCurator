@@ -138,6 +138,7 @@ public:
 	QList<FileRecord> allFiles() const;
 	QList<FileRecord> allFilesPaged(int offset, int limit) const;
 	QList<FileRecord> filesUnderPath(const QString& rootPath) const;
+	int fileCount() const;
 	int fileCountUnderPath(const QString& rootPath) const;
 	int removeFilesUnderPath(const QString& rootPath);
 	bool deleteFile(qint64 fileId);

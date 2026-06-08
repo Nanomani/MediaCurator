@@ -1241,6 +1241,15 @@ void McMainWindow::startLibraryLoader()
 
 	updateActionStates();
 
+	// ── Loading progress bar ─────────────────────────────────────────────────
+	// Query the total once — a fast COUNT(*) before the background thread starts.
+	const int dbTotal = db.fileCount();
+	if (dbTotal > kFirstPageSize) {
+		m_progressBar->setRange(0, dbTotal);
+		m_progressBar->setValue(kFirstPageSize);
+		m_progressBar->setVisible(true);
+	}
+
 	// ── Background thread: meta + remaining files + full queue refresh ────────
 	auto* thread = new QThread(this);
 	auto* loader = new LibraryLoader(kFirstPageSize);
@@ -1262,7 +1271,21 @@ void McMainWindow::startLibraryLoader()
 	connect(loader, &LibraryLoader::fileReady,
 	        m_listModel, &McFileListModel::applyFileUpdate);
 
+	// Update progress bar on each file arriving from the background thread.
+	// This connection is registered after the model's so m_listModel->totalCount()
+	// already reflects the newly added entry when this lambda runs.
+	if (dbTotal > kFirstPageSize) {
+		connect(loader, &LibraryLoader::fileReady, this,
+		        [this](const Mc::FileRecord&, const QList<Mc::StreamRecord>&) {
+			m_progressBar->setValue(m_listModel->totalCount());
+		});
+	}
+
 	connect(loader, &LibraryLoader::finished, this, [this](int total) {
+		// Hide the loading bar before touching status text.
+		m_progressBar->setVisible(false);
+		m_progressBar->setValue(0);
+
 		m_listModel->recomputeFolderCounts();
 		m_jobPanel->refresh();
 		updateJobPanelVisibility(/*forceShow=*/true);
@@ -1270,7 +1293,8 @@ void McMainWindow::startLibraryLoader()
 		updateSavedLabel();
 		const int jobTotal = DatabaseManager::instance().totalJobCount();
 		QSettings().setValue("library/lastFileCount", total);
-		if (!m_progressBar->isVisible()) {
+		// Don't overwrite the status label if a remux job is actively running.
+		if (!m_jobQueue->hasActiveJob()) {
 			const int shown = m_listModel->fileCount();
 			QString text = shown < total
 			    ? tr("%1 of %2 files").arg(shown).arg(total)
