@@ -286,7 +286,7 @@ McWhatIfDialog::McWhatIfDialog(int totalFiles, QWidget* parent)
 	, m_totalFiles(totalFiles)
 {
 	setWindowTitle(tr("Policy Simulation"));
-	setMinimumWidth(560);
+	setMinimumWidth(660);
 	setAttribute(Qt::WA_DeleteOnClose);
 
 	auto* root = new QVBoxLayout(this);
@@ -356,7 +356,7 @@ McWhatIfDialog::McWhatIfDialog(int totalFiles, QWidget* parent)
 		accept();
 	});
 
-	resize(560, 180);
+	resize(660, 180);
 	centerOnParent();
 }
 
@@ -384,7 +384,7 @@ void McWhatIfDialog::onFinished(const QList<FileDecision>& decisions)
 
 	buildResults(decisions);
 	m_resultsPage->setVisible(true);
-	resize(720, 560);
+	resize(820, 560);
 	centerOnParent();
 }
 

@@ -1063,8 +1063,9 @@ void McJobPanel::updateStatusCombo()
 		m_statusFilter->setItemText(i + 2, text);
 	}
 
-	// Restore selection
-	for (int i = 0; i < m_statusFilter->count(); ++i) {
+	// Restore selection — start at 1 to skip the disabled header at index 0,
+	// whose QVariant() data also serialises to "" and would shadow the "All" item.
+	for (int i = 1; i < m_statusFilter->count(); ++i) {
 		if (m_statusFilter->itemData(i).toString() == currentData) {
 			m_statusFilter->setCurrentIndex(i);
 			break;

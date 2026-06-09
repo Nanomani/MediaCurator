@@ -83,14 +83,27 @@ private slots:
 	void processNext()
 	{
 		if (m_stopping) { m_timer->stop(); return; }
+		// Guard against re-entry: the 0ms timer fires again while QEventLoop::exec()
+		// inside fetchHttp is blocking, which would start processing the next file
+		// concurrently on the same thread — causing multiple simultaneous HTTP calls
+		// and recursive event processing. The extra timer fires are harmless no-ops;
+		// the next real iteration is scheduled when this one returns.
+		if (m_processing) return;
 
 		if (m_queue.isEmpty()) {
 			loadPending();
 			if (m_queue.isEmpty()) { m_timer->stop(); return; }
 		}
 
+		// Stop the timer for the duration of processFile so the 0-ms interval
+		// doesn't queue thousands of no-op timeout events during QEventLoop::exec().
+		m_processing = true;
+		m_timer->stop();
 		const qint64 fileId = m_queue.takeFirst();
 		processFile(fileId);
+		m_processing = false;
+		if (!m_stopping)
+			m_timer->start();
 	}
 
 private:
@@ -411,12 +424,13 @@ private:
 		return true;
 	}
 
-	QNetworkAccessManager* m_nam      = nullptr;
-	QTimer*                m_timer    = nullptr;
+	QNetworkAccessManager* m_nam        = nullptr;
+	QTimer*                m_timer      = nullptr;
 	QList<qint64>          m_queue;
 	QString                m_tmdbApiKey;
 	QString                m_cacheDir;
-	bool                   m_stopping  = false;
+	bool                   m_stopping   = false;
+	bool                   m_processing = false;
 };
 
 // ── PosterManager ─────────────────────────────────────────────────────────────

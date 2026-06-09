@@ -394,11 +394,18 @@ void McMainWindow::setupUi()
 	});
 	m_listView->setItemDelegate(fileDelegate);
 
-	// When file data changes (streams updated), the delegate's size cache may
-	// hold a stale height — clear it so sizeHint recomputes for updated rows.
-	connect(m_listModel, &QAbstractItemModel::dataChanged, this, [this] {
-		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
-			d->clearSizeCache();
+	// When stream layout changes, the delegate's size cache may hold stale heights.
+	// Only clear it for roles that actually affect card height (streams / overrides).
+	// Title, year, rating, and poster path never change the badge row count or height.
+	connect(m_listModel, &QAbstractItemModel::dataChanged, this,
+	        [this](const QModelIndex&, const QModelIndex&, const QList<int>& roles) {
+		const bool affectsHeight = roles.isEmpty()
+		    || roles.contains(McFileListModel::StreamsRole)
+		    || roles.contains(McFileListModel::OverridesRole);
+		if (affectsHeight) {
+			if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+				d->clearSizeCache();
+		}
 	});
 
 	// Double-click on the poster column → open IMDb search dialog
@@ -1206,7 +1213,7 @@ void McMainWindow::onScanProgress(int current, int total, const QString& current
 		m_statusLabel->setText(tr("Scanning (%1 found): %2").arg(current).arg(currentFile));
 }
 
-void McMainWindow::onScanFinished(int scanned, int added, int updated, int failed, int skipped, int removed)
+void McMainWindow::onScanFinished(int /*scanned*/, int /*added*/, int /*updated*/, int /*failed*/, int /*skipped*/, int /*removed*/)
 {
 	m_scanThread = nullptr;
 	m_scanWorker = nullptr;
@@ -1219,26 +1226,21 @@ void McMainWindow::onScanFinished(int scanned, int added, int updated, int faile
 
 	setScanningState(false);
 
-	QStringList parts;
-	if (added   > 0) parts << tr("%1 added").arg(added);
-	if (updated > 0) parts << tr("%1 updated").arg(updated);
-	if (skipped > 0) parts << tr("%1 unchanged").arg(skipped);
-	if (removed > 0) parts << tr("%1 removed").arg(removed);
-	if (failed  > 0) parts << tr("%1 failed").arg(failed);
-
-	const QString summary = parts.isEmpty() ? tr("nothing to do") : parts.join(", ");
-	m_statusLabel->setText(
-		tr("Scan complete — %1 of %2 files: %3")
-		.arg(scanned - skipped).arg(scanned).arg(summary)
-	);
-
 	// Model was updated incrementally via fileProcessed/fileRemoved signals — no full reload needed.
 	m_jobPanel->refresh();
 	updateSavedLabel();
-	const int shown = m_listModel->fileCount();
-	const int total = m_listModel->totalCount();
-	if (shown < total)
-		m_statusLabel->setText(tr("Scan complete (%1 of %2 shown): %3").arg(shown).arg(total).arg(summary));
+
+	const int libTotal = m_listModel->totalCount();
+	const int shown    = m_listModel->fileCount();
+	const int jobCount = DatabaseManager::instance().totalJobCount();
+	AppSettings::instance().setValue("library/lastFileCount", libTotal);
+
+	QString text = shown < libTotal
+	    ? tr("%1 of %2 files in library").arg(shown).arg(libTotal)
+	    : tr("%1 files in library").arg(libTotal);
+	if (jobCount > 0)
+		text += tr(", %1 in queue").arg(jobCount);
+	m_statusLabel->setText(text);
 }
 
 void McMainWindow::onRefreshView()
@@ -1281,23 +1283,21 @@ void McMainWindow::startLibraryLoader()
 		m_jobPanel->refreshPaged(kFirstPageSize);   // uses batch streams — fast
 	}
 
-	// ── Status bar: cached file count from settings + live job count ─────────
-	// File count uses the previous-session value for the "illusion" (could be thousands).
-	// Job count is a fast COUNT(*) — the jobs table is small and this is O(1).
-	{
-		const int cachedFiles = AppSettings::instance().value("library/lastFileCount", m_listModel->fileCount()).toInt();
-		const int totalJobs   = db.totalJobCount();
-		QString text = tr("%1 files in library").arg(cachedFiles);
-		if (totalJobs > 0)
-			text += tr(", %1 in queue").arg(totalJobs);
-		m_statusLabel->setText(text);
-	}
-
 	updateActionStates();
 
 	// ── Loading progress bar ─────────────────────────────────────────────────
 	// Query the total once — a fast COUNT(*) before the background thread starts.
 	const int dbTotal = db.fileCount();
+
+	// ── Status bar: live file count + live job count ───────────────────────
+	// Both are fast COUNT(*) queries — done here after dbTotal so we share the call.
+	{
+		const int totalJobs = db.totalJobCount();
+		QString text = tr("%1 files in library").arg(dbTotal);
+		if (totalJobs > 0)
+			text += tr(", %1 in queue").arg(totalJobs);
+		m_statusLabel->setText(text);
+	}
 	if (dbTotal > kFirstPageSize) {
 		m_progressBar->setRange(0, dbTotal);
 		m_progressBar->setValue(kFirstPageSize);
