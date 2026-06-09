@@ -1,4 +1,5 @@
 ﻿#include "ui/McPreviewDialog.h"
+#include "ui/McCardDelegate.h"
 #include "ui/McJobStatsBar.h"
 #include "core/AppSettings.h"
 
@@ -12,10 +13,13 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QPainter>
 #include <QPalette>
 #include <QPushButton>
 #include <QSettings>
 #include <QSplitter>
+#include <QStyle>
+#include <QStyledItemDelegate>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -88,9 +92,81 @@ static qint64 estimateStreamBytes(const Mc::StreamRecord& s,
 	return static_cast<qint64>(bpsPerChannel * qMax(s.channels, 1) * fileDurationSec);
 }
 
+static QString buildTrackTooltip(const Mc::StreamRecord& s, bool isOrig)
+{
+	QStringList lines;
+	QString head = s.codecName.isEmpty() ? QStringLiteral("—") : s.codecName;
+	if (!s.codecProfile.isEmpty())
+		head += QStringLiteral(" (%1)").arg(s.codecProfile);
+	lines << head;
+	if (!s.title.isEmpty())
+		lines << QStringLiteral("\"%1\"").arg(s.title);
+	lines << QObject::tr("Language: %1")
+	         .arg(s.language.isEmpty() ? QStringLiteral("und") : s.language);
+	if (isOrig)              lines << QObject::tr("\xE2\x97\x8E Original language");   // ◎
+	if (s.isDefault)         lines << QObject::tr("\xE2\x98\x85 Default track");       // ★
+	if (s.isForced)          lines << QObject::tr("\xE2\x97\x8F Forced");              // ●
+	if (s.isHearingImpaired) lines << QObject::tr("SDH (hearing impaired)");
+	const QString tt = s.trackType.toLower();
+	if (tt == QLatin1String("commentary")) lines << QObject::tr("Commentary");
+	if (tt == QLatin1String("signs"))      lines << QObject::tr("Signs");
+	return lines.join(QLatin1Char('\n'));
+}
+
 } // anonymous namespace
 
 namespace Mc {
+
+// ── Track badge delegate ──────────────────────────────────────────────────────
+// Paints the Track column as a card-style badge pill (colour-coded by stream
+// type, struck-through when removed) so the preview matches the card views.
+
+class McTrackBadgeDelegate : public QStyledItemDelegate
+{
+	Q_OBJECT
+public:
+	using QStyledItemDelegate::QStyledItemDelegate;
+
+	static constexpr int kCellPadH = 4; // gap between cell edge and badge pill
+	static constexpr int kCellPadV = 4; // vertical padding around the pill
+
+	static QFont badgeFont(const QFont& base)
+	{
+		QFont f = base;
+		f.setPointSizeF(base.pointSizeF() * 0.82); // same scale as McCardDelegate
+		return f;
+	}
+
+	void paint(QPainter* p, const QStyleOptionViewItem& option,
+	           const QModelIndex& index) const override
+	{
+		QStyleOptionViewItem opt = option;
+		initStyleOption(&opt, index);
+		opt.text.clear();
+		QStyle* style = opt.widget ? opt.widget->style() : QApplication::style();
+		style->drawControl(QStyle::CE_ItemViewItem, &opt, p, opt.widget);
+
+		const QString text = index.data(Qt::DisplayRole).toString();
+		if (text.isEmpty())
+			return;
+
+		const QColor color   = McCardDelegate::badgeColor(index.data(Qt::UserRole).toString());
+		const bool   removed = index.data(Qt::UserRole + 1).toBool();
+		const int    y       = opt.rect.top() + (opt.rect.height() - McCardDelegate::kBadgeH) / 2;
+		McCardDelegate::drawBadge(p, opt.rect.left() + kCellPadH, y,
+		                          McCardDelegate::kBadgeH, text, color,
+		                          badgeFont(opt.font), removed);
+	}
+
+	QSize sizeHint(const QStyleOptionViewItem& option,
+	               const QModelIndex& index) const override
+	{
+		const QFontMetrics fm(badgeFont(option.font));
+		const int w = fm.horizontalAdvance(index.data(Qt::DisplayRole).toString())
+		            + 2 * McCardDelegate::kBadgePad + 2 * kCellPadH;
+		return { w, McCardDelegate::kBadgeH + 2 * kCellPadV };
+	}
+};
 
 static QFrame* previewSeparator(QWidget* parent)
 {
@@ -132,7 +208,7 @@ void McPreviewDialog::setupUi(const FileDecision& decision)
 	if (const QByteArray geo = s.value("previewDialog/geometry").toByteArray(); !geo.isEmpty())
 		restoreGeometry(geo);
 	else
-		resize(1060, 600);
+		resize(1100, 620);
 
 	auto* root = new QVBoxLayout(this);
 	root->setContentsMargins(8, 8, 8, 8);
@@ -223,27 +299,24 @@ void McPreviewDialog::setupUi(const FileDecision& decision)
 	auto* beforeLayout = new QVBoxLayout(beforeGroup);
 	beforeLayout->setContentsMargins(4, 4, 4, 4);
 
-	auto* beforeTable = new QTableWidget(0, 6, beforeGroup);
+	auto* beforeTable = new QTableWidget(0, 4, beforeGroup);
 	beforeTable->setHorizontalHeaderLabels({
-		tr("Type"), tr("Codec"), tr("Language"), tr("Bitrate"), tr("Est. Size"), tr("Decision / Reason")
+		tr("Track"), tr("Bitrate"), tr("Est. Size"), tr("Decision / Reason")
 	});
-	beforeTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+	beforeTable->setItemDelegateForColumn(0, new McTrackBadgeDelegate(beforeTable));
+	beforeTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
 	beforeTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
 	beforeTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
-	beforeTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
-	beforeTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
-	beforeTable->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
-	beforeTable->horizontalHeader()->resizeSection(0, 72);
-	beforeTable->horizontalHeader()->resizeSection(1, 100);
-	beforeTable->horizontalHeader()->resizeSection(2, 68);
-	beforeTable->horizontalHeader()->resizeSection(3, 72);
-	beforeTable->horizontalHeader()->resizeSection(4, 80);
+	beforeTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+	beforeTable->horizontalHeader()->resizeSection(1, 68);
+	beforeTable->horizontalHeader()->resizeSection(2, 76);
 	beforeTable->setSelectionBehavior(QAbstractItemView::SelectRows);
 	beforeTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	beforeTable->setAlternatingRowColors(true);
 	beforeTable->setShowGrid(false);
 	beforeTable->verticalHeader()->setVisible(false);
-	beforeTable->verticalHeader()->setDefaultSectionSize(22);
+	beforeTable->verticalHeader()->setDefaultSectionSize(
+	    McCardDelegate::kBadgeH + 2 * McTrackBadgeDelegate::kCellPadV);
 	populateBeforeTable(beforeTable, decision);
 	beforeLayout->addWidget(beforeTable);
 	panels->addWidget(beforeGroup);
@@ -255,25 +328,22 @@ void McPreviewDialog::setupUi(const FileDecision& decision)
 	auto* afterLayout = new QVBoxLayout(afterGroup);
 	afterLayout->setContentsMargins(4, 4, 4, 4);
 
-	auto* afterTable = new QTableWidget(0, 5, afterGroup);
+	auto* afterTable = new QTableWidget(0, 3, afterGroup);
 	afterTable->setHorizontalHeaderLabels({
-		tr("Type"), tr("Codec"), tr("Language"), tr("Bitrate"), tr("Est. Size")
+		tr("Track"), tr("Bitrate"), tr("Est. Size")
 	});
-	afterTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
+	afterTable->setItemDelegateForColumn(0, new McTrackBadgeDelegate(afterTable));
+	afterTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
 	afterTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
-	afterTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
-	afterTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
-	afterTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
-	afterTable->horizontalHeader()->resizeSection(0, 72);
-	afterTable->horizontalHeader()->resizeSection(1, 100);
-	afterTable->horizontalHeader()->resizeSection(2, 68);
-	afterTable->horizontalHeader()->resizeSection(3, 72);
+	afterTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+	afterTable->horizontalHeader()->resizeSection(1, 68);
 	afterTable->setSelectionBehavior(QAbstractItemView::SelectRows);
 	afterTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	afterTable->setAlternatingRowColors(true);
 	afterTable->setShowGrid(false);
 	afterTable->verticalHeader()->setVisible(false);
-	afterTable->verticalHeader()->setDefaultSectionSize(22);
+	afterTable->verticalHeader()->setDefaultSectionSize(
+	    McCardDelegate::kBadgeH + 2 * McTrackBadgeDelegate::kCellPadV);
 	populateAfterTable(afterTable, decision);
 	afterLayout->addWidget(afterTable);
 	panels->addWidget(afterGroup);
@@ -357,16 +427,16 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 		const int row = table->rowCount();
 		table->insertRow(row);
 
-		auto* typeItem    = new QTableWidgetItem(td.stream.codecType);
-		auto* codecItem   = new QTableWidgetItem(td.stream.codecName.isEmpty()
-		                                         ? tr("—") : td.stream.codecName);
 		const bool isOrig = td.stream.codecType == QLatin1String("audio")
 		                 && !decision.file.originalLanguage.isEmpty()
 		                 && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
-		QString langStr = td.stream.language.isEmpty() ? tr("und") : td.stream.language;
-		if (td.stream.isDefault) langStr += "  \xE2\x98\x85"; // ★
-		if (isOrig)              langStr += "  \xE2\x97\x8E"; // ◎
-		auto* langItem    = new QTableWidgetItem(langStr);
+		const bool removed = td.decision == Decision::Remove;
+
+		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(td.stream, isOrig));
+		trackItem->setData(Qt::UserRole, td.stream.codecType);
+		trackItem->setData(Qt::UserRole + 1, removed);
+		trackItem->setToolTip(buildTrackTooltip(td.stream, isOrig));
+
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
 		    estimateStreamBytes(td.stream, allStreams,
@@ -380,9 +450,18 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 		bitrateItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-		// Strike-through the whole row for removed tracks
-		if (td.decision == Decision::Remove) {
-			for (auto* item : { typeItem, codecItem, langItem, bitrateItem, sizeItem }) {
+		// Tint the original-language audio row so it's easy to spot which
+		// track is protected by the keep-original-audio policy.
+		if (isOrig) {
+			const QColor tint(0x40, 0x90, 0xe0, 35);
+			for (auto* item : { trackItem, bitrateItem, sizeItem })
+				item->setBackground(tint);
+		}
+
+		// Removed tracks: the badge delegate draws its own strike-through;
+		// grey out the remaining text cells to match.
+		if (removed) {
+			for (auto* item : { bitrateItem, sizeItem }) {
 				QFont f = item->font();
 				f.setStrikeOut(true);
 				item->setFont(f);
@@ -390,12 +469,10 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 			}
 		}
 
-		table->setItem(row, 0, typeItem);
-		table->setItem(row, 1, codecItem);
-		table->setItem(row, 2, langItem);
-		table->setItem(row, 3, bitrateItem);
-		table->setItem(row, 4, sizeItem);
-		table->setItem(row, 5, decItem);
+		table->setItem(row, 0, trackItem);
+		table->setItem(row, 1, bitrateItem);
+		table->setItem(row, 2, sizeItem);
+		table->setItem(row, 3, decItem);
 	}
 }
 
@@ -411,16 +488,15 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 		const int row = table->rowCount();
 		table->insertRow(row);
 
-		auto* typeItem    = new QTableWidgetItem(td.stream.codecType);
-		auto* codecItem   = new QTableWidgetItem(td.stream.codecName.isEmpty()
-		                                         ? tr("—") : td.stream.codecName);
-		const bool isOrig2 = td.stream.codecType == QLatin1String("audio")
-		                  && !decision.file.originalLanguage.isEmpty()
-		                  && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
-		QString langStr2 = td.stream.language.isEmpty() ? tr("und") : td.stream.language;
-		if (td.stream.isDefault) langStr2 += "  \xE2\x98\x85"; // ★
-		if (isOrig2)             langStr2 += "  \xE2\x97\x8E"; // ◎
-		auto* langItem    = new QTableWidgetItem(langStr2);
+		const bool isOrig = td.stream.codecType == QLatin1String("audio")
+		                 && !decision.file.originalLanguage.isEmpty()
+		                 && td.stream.language.compare(decision.file.originalLanguage, Qt::CaseInsensitive) == 0;
+
+		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(td.stream, isOrig));
+		trackItem->setData(Qt::UserRole, td.stream.codecType);
+		trackItem->setData(Qt::UserRole + 1, false);
+		trackItem->setToolTip(buildTrackTooltip(td.stream, isOrig));
+
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
 		    estimateStreamBytes(td.stream, allStreams,
@@ -428,11 +504,15 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 		bitrateItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-		table->setItem(row, 0, typeItem);
-		table->setItem(row, 1, codecItem);
-		table->setItem(row, 2, langItem);
-		table->setItem(row, 3, bitrateItem);
-		table->setItem(row, 4, sizeItem);
+		if (isOrig) {
+			const QColor tint(0x40, 0x90, 0xe0, 35);
+			for (auto* item : { trackItem, bitrateItem, sizeItem })
+				item->setBackground(tint);
+		}
+
+		table->setItem(row, 0, trackItem);
+		table->setItem(row, 1, bitrateItem);
+		table->setItem(row, 2, sizeItem);
 	}
 }
 
@@ -476,3 +556,5 @@ QColor McPreviewDialog::decisionColor(Decision d)
 }
 
 } // namespace Mc
+
+#include "McPreviewDialog.moc"

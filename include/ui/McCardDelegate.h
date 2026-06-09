@@ -52,6 +52,18 @@ public:
 
 	static constexpr int kPosterW = 110; // poster column width (sized for ~2:3 aspect at typical card height)
 
+	// Badge rendering shared with McPreviewDialog's track-badge column.
+	static QString buildBadgeText(const StreamRecord& s, bool isOriginal = false);
+	static QColor  badgeColor(const QString& codecType);
+	static int     drawBadge(QPainter* p, int x, int y, int h,
+	                         const QString& text, const QColor& bg, const QFont& font,
+	                         bool removed  = false,
+	                         bool hasTip   = false, const QColor& cardBg = {},
+	                         bool hovered  = false);
+
+	static constexpr int kBadgeH   = 18; // height of each track badge pill
+	static constexpr int kBadgePad = 6;  // horizontal text padding inside each badge pill
+
 public slots:
 	void invalidateSizeCacheFor(qint64 fileId);
 	void clearSizeCache();
@@ -95,16 +107,8 @@ private:
 	static QString formatSize(qint64 bytes);
 	static QString codecLabel(const StreamRecord& s);
 	static QString channelStr(int channels);
-	static QString buildBadgeText(const StreamRecord& s, bool isOriginal = false);
-	static QColor  badgeColor(const QString& codecType);
 	static QColor  statusColor(const QString& status);
 	static QString statusLabel(const QString& status);
-
-	static int  drawBadge(QPainter* p, int x, int y, int h,
-	                      const QString& text, const QColor& bg, const QFont& font,
-	                      bool removed  = false,
-	                      bool hasTip   = false, const QColor& cardBg = {},
-	                      bool hovered  = false);
 
 	int  drawBadgeRow(QPainter* p, QRect rowRect,
 	                  const QList<StreamRecord>& tracks,
@@ -139,10 +143,8 @@ private:
 	static constexpr int kFolderGap = 0;  // explicit gap between the title row and the filename row
 	static constexpr int kHeaderH   = 24; // height of the filename row (also the play-button size)
 	static constexpr int kSepGap    = 3;  // gap between the filename row and the first badge row; set to kFolderGap+(kFolderH-12)/2 for equal visual gaps
-	static constexpr int kBadgeH    = 18; // height of each track badge pill
 	static constexpr int kRowGap    = 4;  // vertical gap between badge rows
 	static constexpr int kBadgeGap  = 4;  // horizontal gap between adjacent badges within a row
-	static constexpr int kBadgePad  = 6;  // horizontal text padding inside each badge pill
 	static constexpr int kPlayBtnW  = 24; // width and height of the play (▶) button on the right
 	static constexpr int kImdbBtnW  = 24; // width and height of the IMDb shortcut button on the right
 	static constexpr int kPosterGap = 0;  // gap between the poster column right edge and the content area
