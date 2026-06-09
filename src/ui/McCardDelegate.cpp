@@ -1,6 +1,7 @@
 #include "ui/McCardDelegate.h"
 #include "ui/McFileListModel.h"
 #include "ui/McJobListModel.h"
+#include "ui/McLanguageFlags.h"
 #include "classifier/RegexClassifier.h"
 #include "core/ExternalTools.h"
 
@@ -17,6 +18,7 @@
 #include <QStyleOption>
 #include <QStyleOptionButton>
 #include <QToolTip>
+#include <QtMath>
 #include <algorithm>
 
 namespace {
@@ -238,17 +240,29 @@ QString McCardDelegate::buildBadgeText(const StreamRecord& s, bool isOriginal)
 	} else if (s.codecType == "audio") {
 		const QString ch = channelStr(s.channels);
 		if (!ch.isEmpty()) t += "  " + ch;
-		if (!s.language.isEmpty() && s.language != "und")
+		// Language is shown as a flag icon when mapped; fall back to the code
+		if (!s.language.isEmpty() && s.language != "und"
+		    && McLanguageFlags::countryForLanguage(s.language).isEmpty())
 			t += "  " + s.language.toUpper();
 		if (s.isDefault)  t += "  \xE2\x98\x85"; // ★
 		if (isOriginal)   t += "  \xE2\x97\x8E"; // ◎
 	} else if (s.codecType == "subtitle") {
-		if (!s.language.isEmpty() && s.language != "und")
+		if (!s.language.isEmpty() && s.language != "und"
+		    && McLanguageFlags::countryForLanguage(s.language).isEmpty())
 			t += "  " + s.language.toUpper();
 		if (s.isForced)  t += "  \xE2\x97\x8F";
 		if (s.isDefault) t += "  \xE2\x98\x85"; // ★
 	}
 	return t;
+}
+
+int McCardDelegate::badgeWidthFor(const StreamRecord& s, bool isOriginal, const QFontMetrics& fm)
+{
+	int w = fm.horizontalAdvance(buildBadgeText(s, isOriginal)) + 2 * kBadgePad;
+	if (s.codecType != QLatin1String("video")
+	    && !McLanguageFlags::countryForLanguage(s.language).isEmpty())
+		w += kFlagW + kFlagGap;
+	return w;
 }
 
 QColor McCardDelegate::badgeColor(const QString& codecType)
@@ -299,9 +313,14 @@ QRect McCardDelegate::imdbButtonRect(const QRect& contentRect)
 
 int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
                                const QString& text, const QColor& bg, const QFont& font,
-                               bool removed, bool hasTip, const QColor& cardBg, bool hovered)
+                               bool removed, bool hasTip, const QColor& cardBg, bool hovered,
+                               const QString& flagLang)
 {
-	const int w = QFontMetrics(font).horizontalAdvance(text) + 2 * kBadgePad;
+	const QPixmap flagPm = McLanguageFlags::flag(flagLang, kFlagH,
+	                                             p->device()->devicePixelRatioF());
+	const bool hasFlag = !flagPm.isNull();
+	const int  w = QFontMetrics(font).horizontalAdvance(text) + 2 * kBadgePad
+	             + (hasFlag ? kFlagW + kFlagGap : 0);
 	const QRect r(x, y, w, h);
 
 	p->save();
@@ -324,9 +343,19 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
 		p->drawRoundedRect(r, 3, 3);
 	}
 
+	int textLeft = r.left() + kBadgePad;
+	if (hasFlag) {
+		const QRect fr(textLeft, r.top() + (h - kFlagH) / 2, kFlagW, kFlagH);
+		if (removed) p->setOpacity(0.4);
+		p->drawPixmap(fr, flagPm);
+		if (removed) p->setOpacity(1.0);
+		textLeft += kFlagW + kFlagGap;
+	}
+
 	p->setPen(removed ? QColor(0xff, 0xff, 0xff, 90) : Qt::white);
 	p->setFont(font);
-	p->drawText(r, Qt::AlignCenter, text);
+	p->drawText(QRect(textLeft, r.top(), r.right() - kBadgePad - textLeft + 1, h),
+	            Qt::AlignVCenter | Qt::AlignLeft, text);
 
 	if (removed) {
 		const int mid = r.top() + r.height() / 2;
@@ -337,6 +366,28 @@ int McCardDelegate::drawBadge(QPainter* p, int x, int y, int h,
 
 	p->restore();
 	return w;
+}
+
+QPixmap McCardDelegate::badgePixmap(const QString& text, const QString& codecType,
+                                     const QFont& baseFont, qreal dpr,
+                                     const QString& flagLang, bool removed)
+{
+	QFont f = baseFont;
+	f.setPointSizeF(baseFont.pointSizeF() * 0.82); // same scale the card views use
+
+	const QFontMetrics fm(f);
+	int w = fm.horizontalAdvance(text) + 2 * kBadgePad;
+	if (!McLanguageFlags::countryForLanguage(flagLang).isEmpty())
+		w += kFlagW + kFlagGap;
+
+	QPixmap pm(qCeil(w * dpr), qCeil(kBadgeH * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	drawBadge(&p, 0, 0, kBadgeH, text, badgeColor(codecType), f,
+	          removed, false, {}, false, flagLang);
+	p.end();
+	return pm;
 }
 
 int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
@@ -366,7 +417,7 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 		                           && !originalLang.isEmpty()
 		                           && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
 		const QString       text    = buildBadgeText(s, isOrig);
-		const int           bW      = fm.horizontalAdvance(text) + 2 * kBadgePad;
+		const int           bW      = badgeWidthFor(s, isOrig, fm);
 		const bool          removed = removedIndices.contains(s.streamIndex);
 		const bool          isHov   = (s.streamIndex == hoveredStreamIndex);
 		const bool          hasTip  = !s.title.isEmpty() || s.isDefault || s.isHearingImpaired || isOrig;
@@ -378,7 +429,8 @@ int McCardDelegate::drawBadgeRow(QPainter* p, QRect rowRect,
 		}
 		const int bY = rowRect.top() + row * (kBadgeH + kRowGap);
 		x += drawBadge(p, x, bY, kBadgeH, text, color, badgeFont,
-		               removed, hasTip, cardBg, isHov);
+		               removed, hasTip, cardBg, isHov,
+		               s.codecType == QLatin1String("video") ? QString() : s.language);
 		if (!isLast) x += kBadgeGap;
 	}
 	return row + 1;
@@ -422,7 +474,7 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 			const bool isOrig = s.codecType == QLatin1String("audio")
 			                 && !originalLang.isEmpty()
 			                 && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
-			const int bW = fm.horizontalAdvance(buildBadgeText(s, isOrig)) + 2 * kBadgePad;
+			const int bW = badgeWidthFor(s, isOrig, fm);
 			if (rx > 0 && rx + bW > badgeAreaW) { numRows++; rx = 0; }
 			rx += bW + kBadgeGap;
 		}
@@ -436,8 +488,7 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 					const bool    isOrig = s.codecType == QLatin1String("audio")
 					                   && !originalLang.isEmpty()
 					                   && s.language.compare(originalLang, Qt::CaseInsensitive) == 0;
-					const QString text = buildBadgeText(s, isOrig);
-					const int     bW   = fm.horizontalAdvance(text) + 2 * kBadgePad;
+					const int bW = badgeWidthFor(s, isOrig, fm);
 					if (x > content.left() && x + bW > content.left() + badgeAreaW)
 						{ row++; x = content.left(); }
 					const int by = y + row * (kBadgeH + kRowGap);
@@ -582,7 +633,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 			const bool isOrig = s.codecType == QLatin1String("audio")
 			                 && !d.originalLanguage.isEmpty()
 			                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
-			const int bW = fm.horizontalAdvance(buildBadgeText(s, isOrig)) + 2 * kBadgePad;
+			const int bW = badgeWidthFor(s, isOrig, fm);
 			if (rx > 0 && rx + bW > badgeAreaW) { numRows++; rx = 0; }
 			rx += bW + kBadgeGap;
 		}
@@ -595,8 +646,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 				const bool    isOrig = s.codecType == QLatin1String("audio")
 				                   && !d.originalLanguage.isEmpty()
 				                   && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
-				const QString txt = buildBadgeText(s, isOrig);
-				const int     bW  = fm.horizontalAdvance(txt) + 2 * kBadgePad;
+				const int bW = badgeWidthFor(s, isOrig, fm);
 				if (x > content.left() && x + bW > content.left() + badgeAreaW)
 					{ row++; x = content.left(); }
 				const int by = y + row * (kBadgeH + kRowGap);
@@ -605,6 +655,9 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					const auto cls = clf.classify(s.title, s.language, s.codecName);
 					QStringList lines;
 					if (!s.title.isEmpty())  lines << s.title;
+					if (!s.language.isEmpty() && s.language != QLatin1String("und"))
+						lines << tr("Language: %1 (%2)")
+						         .arg(McLanguageFlags::displayName(s.language), s.language);
 					if (s.isDefault)         lines << tr("\xE2\x98\x85  Default track");
 					if (s.isHearingImpaired) lines << tr("SDH / Hearing impaired");
 					if (isOrig)              lines << tr("\xE2\x97\x8E  Original audio language");
@@ -680,7 +733,7 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 			const bool isOrig = s.codecType == QLatin1String("audio")
 			                 && !d.originalLanguage.isEmpty()
 			                 && s.language.compare(d.originalLanguage, Qt::CaseInsensitive) == 0;
-			const int bW = fm.horizontalAdvance(buildBadgeText(s, isOrig)) + 2 * kBadgePad;
+			const int bW = badgeWidthFor(s, isOrig, fm);
 			if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
 			x += bW + kBadgeGap;
 		}

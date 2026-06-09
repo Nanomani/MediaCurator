@@ -19,6 +19,8 @@ set(MC_SOURCES
     ui/McTrackTableModel.cpp
     ui/McFileListModel.cpp
     ui/McCardDelegate.cpp
+    ui/McLanguageFlags.cpp
+    ui/McLegendDialog.cpp
     ui/RangeSlider.cpp
     ui/McSettingsDialog.cpp
     ui/McJobPanel.cpp
@@ -82,6 +84,8 @@ set(MC_HEADERS
     ../include/ui/McTrackTableModel.h
     ../include/ui/McFileListModel.h
     ../include/ui/McCardDelegate.h
+    ../include/ui/McLanguageFlags.h
+    ../include/ui/McLegendDialog.h
     ../include/ui/McFileCardDelegate.h
     ../include/ui/McJobCardDelegate.h
     ../include/ui/RangeSlider.h
@@ -169,6 +173,18 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/lightning_qr.png
         resources/icons/block.svg
         resources/icons/visibility_off.svg
+        resources/icons/legend_toggle.svg
+)
+
+# Country flags for track-badge language icons (lipis/flag-icons, MIT —
+# see resources/flags/LICENSE.flag-icons.txt). Globbed so adding a flag is
+# just dropping the SVG in; re-run CMake configure after adding files.
+file(GLOB MC_FLAG_SVGS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/flags/*.svg")
+qt_add_resources(MediaCurator "mc_flags"
+    PREFIX "/"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+    FILES ${MC_FLAG_SVGS}
 )
 
 # Copy tools/ directory next to the executable after build.

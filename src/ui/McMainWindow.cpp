@@ -7,6 +7,7 @@
 #include "ui/McFileCardDelegate.h"
 #include "ui/McFileListModel.h"
 #include "ui/McJobPanel.h"
+#include "ui/McLegendDialog.h"
 #include "ui/McPreviewDialog.h"
 #include "ui/McSettingsDialog.h"
 #include "engine/ActionEngine.h"
@@ -988,6 +989,13 @@ void McMainWindow::setupMenuBar()
 
 	// Help menu
 	QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
+	auto* legendAction = new QAction(svgIcon(":/icons/legend_toggle.svg"), tr("&Legend…"), this);
+	connect(legendAction, &QAction::triggered, this, [this] {
+		McLegendDialog dlg(this);
+		dlg.exec();
+	});
+	helpMenu->addAction(legendAction);
+	helpMenu->addSeparator();
 	auto* donateMenuAction = new QAction(svgIcon(":/icons/dollar.svg"), tr("&Donate…"), this);
 	connect(donateMenuAction, &QAction::triggered, this, &McMainWindow::onDonate);
 	helpMenu->addAction(donateMenuAction);

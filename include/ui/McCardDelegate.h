@@ -53,16 +53,26 @@ public:
 	static constexpr int kPosterW = 110; // poster column width (sized for ~2:3 aspect at typical card height)
 
 	// Badge rendering shared with McPreviewDialog's track-badge column.
+	// flagLang: language code whose country flag is drawn before the text;
+	// pass empty (or an unmapped code) to render a text-only badge.
 	static QString buildBadgeText(const StreamRecord& s, bool isOriginal = false);
 	static QColor  badgeColor(const QString& codecType);
+	static int     badgeWidthFor(const StreamRecord& s, bool isOriginal, const QFontMetrics& fm);
 	static int     drawBadge(QPainter* p, int x, int y, int h,
 	                         const QString& text, const QColor& bg, const QFont& font,
 	                         bool removed  = false,
 	                         bool hasTip   = false, const QColor& cardBg = {},
-	                         bool hovered  = false);
+	                         bool hovered  = false,
+	                         const QString& flagLang = {});
+	static QPixmap badgePixmap(const QString& text, const QString& codecType,
+	                           const QFont& baseFont, qreal dpr,
+	                           const QString& flagLang = {}, bool removed = false);
 
 	static constexpr int kBadgeH   = 18; // height of each track badge pill
 	static constexpr int kBadgePad = 6;  // horizontal text padding inside each badge pill
+	static constexpr int kFlagW    = 16; // flag icon width inside a badge (4:3)
+	static constexpr int kFlagH    = 12; // flag icon height inside a badge
+	static constexpr int kFlagGap  = 4;  // gap between flag icon and badge text
 
 public slots:
 	void invalidateSizeCacheFor(qint64 fileId);

@@ -1,6 +1,7 @@
 ﻿#include "ui/McPreviewDialog.h"
 #include "ui/McCardDelegate.h"
 #include "ui/McJobStatsBar.h"
+#include "ui/McLanguageFlags.h"
 #include "core/AppSettings.h"
 
 #include <QApplication>
@@ -101,8 +102,9 @@ static QString buildTrackTooltip(const Mc::StreamRecord& s, bool isOrig)
 	lines << head;
 	if (!s.title.isEmpty())
 		lines << QStringLiteral("\"%1\"").arg(s.title);
-	lines << QObject::tr("Language: %1")
-	         .arg(s.language.isEmpty() ? QStringLiteral("und") : s.language);
+	const QString lang = s.language.isEmpty() ? QStringLiteral("und") : s.language;
+	lines << QObject::tr("Language: %1 (%2)")
+	         .arg(Mc::McLanguageFlags::displayName(lang), lang);
 	if (isOrig)              lines << QObject::tr("\xE2\x97\x8E Original language");   // ◎
 	if (s.isDefault)         lines << QObject::tr("\xE2\x98\x85 Default track");       // ★
 	if (s.isForced)          lines << QObject::tr("\xE2\x97\x8F Forced");              // ●
@@ -150,20 +152,25 @@ public:
 		if (text.isEmpty())
 			return;
 
-		const QColor color   = McCardDelegate::badgeColor(index.data(Qt::UserRole).toString());
-		const bool   removed = index.data(Qt::UserRole + 1).toBool();
-		const int    y       = opt.rect.top() + (opt.rect.height() - McCardDelegate::kBadgeH) / 2;
+		const QColor  color   = McCardDelegate::badgeColor(index.data(Qt::UserRole).toString());
+		const bool    removed = index.data(Qt::UserRole + 1).toBool();
+		const QString lang    = index.data(Qt::UserRole + 2).toString();
+		const int     y       = opt.rect.top() + (opt.rect.height() - McCardDelegate::kBadgeH) / 2;
 		McCardDelegate::drawBadge(p, opt.rect.left() + kCellPadH, y,
 		                          McCardDelegate::kBadgeH, text, color,
-		                          badgeFont(opt.font), removed);
+		                          badgeFont(opt.font), removed,
+		                          false, {}, false, lang);
 	}
 
 	QSize sizeHint(const QStyleOptionViewItem& option,
 	               const QModelIndex& index) const override
 	{
 		const QFontMetrics fm(badgeFont(option.font));
-		const int w = fm.horizontalAdvance(index.data(Qt::DisplayRole).toString())
-		            + 2 * McCardDelegate::kBadgePad + 2 * kCellPadH;
+		int w = fm.horizontalAdvance(index.data(Qt::DisplayRole).toString())
+		      + 2 * McCardDelegate::kBadgePad + 2 * kCellPadH;
+		const QString lang = index.data(Qt::UserRole + 2).toString();
+		if (!McLanguageFlags::countryForLanguage(lang).isEmpty())
+			w += McCardDelegate::kFlagW + McCardDelegate::kFlagGap;
 		return { w, McCardDelegate::kBadgeH + 2 * kCellPadV };
 	}
 };
@@ -435,6 +442,8 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(td.stream, isOrig));
 		trackItem->setData(Qt::UserRole, td.stream.codecType);
 		trackItem->setData(Qt::UserRole + 1, removed);
+		trackItem->setData(Qt::UserRole + 2,
+		    td.stream.codecType == QLatin1String("video") ? QString() : td.stream.language);
 		trackItem->setToolTip(buildTrackTooltip(td.stream, isOrig));
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
@@ -495,6 +504,8 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 		auto* trackItem = new QTableWidgetItem(McCardDelegate::buildBadgeText(td.stream, isOrig));
 		trackItem->setData(Qt::UserRole, td.stream.codecType);
 		trackItem->setData(Qt::UserRole + 1, false);
+		trackItem->setData(Qt::UserRole + 2,
+		    td.stream.codecType == QLatin1String("video") ? QString() : td.stream.language);
 		trackItem->setToolTip(buildTrackTooltip(td.stream, isOrig));
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));

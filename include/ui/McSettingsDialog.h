@@ -17,6 +17,9 @@ class McSettingsDialog : public QDialog
 public:
 	explicit McSettingsDialog(UserProfile* profile, QWidget* parent = nullptr);
 
+protected:
+	void done(int result) override;
+
 private slots:
 	void onAddLanguage();
 	void onRemoveLanguage();

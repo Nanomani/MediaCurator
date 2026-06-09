@@ -1,4 +1,7 @@
 ﻿#include "ui/McSettingsDialog.h"
+#include "ui/McCardDelegate.h"
+#include "ui/McLanguageFlags.h"
+#include "core/AppSettings.h"
 #include "core/UserProfile.h"
 
 #include <QCheckBox>
@@ -6,12 +9,15 @@
 #include <QDialogButtonBox>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSettings>
 #include <QVBoxLayout>
+#include <QtMath>
 
 namespace Mc {
 
@@ -57,11 +63,76 @@ static QString displayName(const QString& code)
 	return code;
 }
 
+// Flag icon for the language list and picker. Unmapped codes ("mul") get a
+// transparent placeholder of the same size so all rows align.
+static QIcon langFlagIcon(const QString& code, qreal dpr)
+{
+	QPixmap pm = McLanguageFlags::flag(code, McCardDelegate::kFlagH, dpr);
+	if (pm.isNull()) {
+		pm = QPixmap(qCeil(McCardDelegate::kFlagW * dpr), qCeil(McCardDelegate::kFlagH * dpr));
+		pm.setDevicePixelRatio(dpr);
+		pm.fill(Qt::transparent);
+	}
+	return QIcon(pm);
+}
+
+// Short badge label per format id — matches what codecLabel shows on cards.
+static QString formatBadgeText(const QString& id)
+{
+	static const QHash<QString, QString> texts = {
+		{"atmos",     "Atmos"},
+		{"truehd",    "TrueHD"},
+		{"dtsx",      "DTS:X"},
+		{"dtshdma",   "DTS-HD MA"},
+		{"dtshd_hra", "DTS-HD HRA"},
+		{"flac",      "FLAC"},
+		{"eac3",      "DD+"},
+		{"dts",       "DTS"},
+		{"ac3",       "DD"},
+		{"aac",       "AAC"},
+		{"mp3",       "MP3"},
+		{"pgs",       "PGS"},
+		{"vobsub",    "VobSub"},
+		{"ass",       "ASS"},
+		{"srt",       "SRT"},
+		{"vtt",       "VTT"},
+	};
+	return texts.value(id, id.toUpper());
+}
+
+// Longer description shown next to the badge in the priority lists.
+static QString formatDescription(const QString& id)
+{
+	static const QHash<QString, QString> texts = {
+		{"atmos",     "Dolby Atmos — object-based, lossless"},
+		{"truehd",    "Dolby TrueHD — lossless"},
+		{"dtsx",      "DTS:X — object-based"},
+		{"dtshdma",   "DTS-HD Master Audio — lossless"},
+		{"dtshd_hra", "DTS-HD High Resolution"},
+		{"flac",      "FLAC / PCM — lossless"},
+		{"eac3",      "Dolby Digital Plus (E-AC-3)"},
+		{"dts",       "DTS Digital Surround"},
+		{"ac3",       "Dolby Digital (AC-3)"},
+		{"aac",       "AAC"},
+		{"mp3",       "MP3"},
+		{"pgs",       "Blu-ray image subtitles"},
+		{"vobsub",    "DVD image subtitles"},
+		{"ass",       "Styled text (ASS / SSA)"},
+		{"srt",       "Plain text (SubRip)"},
+		{"vtt",       "Web text (WebVTT)"},
+	};
+	return texts.value(id, id);
+}
+
 McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	: QDialog(parent), m_profile(profile)
 {
 	setWindowTitle(tr("Settings"));
 	setMinimumSize(800, 540);
+
+	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
+	if (const QByteArray geo = s.value("settingsDialog/geometry").toByteArray(); !geo.isEmpty())
+		restoreGeometry(geo);
 
 	auto* root = new QVBoxLayout(this);
 	root->setSpacing(10);
@@ -86,7 +157,8 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	m_langList->setSelectionMode(QAbstractItemView::SingleSelection);
 	m_langList->setMaximumHeight(110);
 	for (const QString& code : profile->understoodLanguages()) {
-		auto* item = new QListWidgetItem(displayName(code), m_langList);
+		auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
+		                                 displayName(code), m_langList);
 		item->setData(Qt::UserRole, code);
 	}
 	langLayout->addWidget(m_langList);
@@ -94,7 +166,8 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	auto* addRow = new QHBoxLayout;
 	m_langCombo  = new QComboBox(langGroup);
 	for (const auto& [code, name] : kKnownLanguages)
-		m_langCombo->addItem(QStringLiteral("%1 — %2").arg(code, name), code);
+		m_langCombo->addItem(langFlagIcon(code, devicePixelRatioF()),
+		                     QStringLiteral("%1 — %2").arg(code, name), code);
 	m_langCombo->setEditable(true);
 	m_langCombo->setInsertPolicy(QComboBox::NoInsert);
 	m_langCombo->lineEdit()->setPlaceholderText(tr("ISO 639-2 code (e.g. eng, dan)"));
@@ -152,12 +225,18 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	const QStringList& order    = profile->audioFormatOrder();
 	const QStringList& disabled = profile->disabledAudioFormats();
+	int audioBadgeW = 0;
 	for (const QString& id : order) {
-		auto* item = new QListWidgetItem(UserProfile::audioFormatDisplayName(id), m_audioFormatList);
+		const QPixmap pm = McCardDelegate::badgePixmap(
+		    formatBadgeText(id), QStringLiteral("audio"), font(), devicePixelRatioF());
+		audioBadgeW = qMax(audioBadgeW, qCeil(pm.deviceIndependentSize().width()));
+		auto* item = new QListWidgetItem(QIcon(pm), formatDescription(id), m_audioFormatList);
 		item->setData(Qt::UserRole, id);
 		item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
 		item->setCheckState(disabled.contains(id) ? Qt::Unchecked : Qt::Checked);
 	}
+	// Reserve the widest badge so descriptions align in one column
+	m_audioFormatList->setIconSize(QSize(audioBadgeW, McCardDelegate::kBadgeH));
 
 	auto* fmtBtnRow = new QHBoxLayout;
 	m_btnFormatUp   = new QPushButton(tr("▲  Up"),   fmtGroup);
@@ -222,12 +301,17 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 
 	const QStringList& subOrder    = profile->subtitleFormatOrder();
 	const QStringList& subDisabled = profile->disabledSubtitleFormats();
+	int subBadgeW = 0;
 	for (const QString& id : subOrder) {
-		auto* item = new QListWidgetItem(UserProfile::subtitleFormatDisplayName(id), m_subFormatList);
+		const QPixmap pm = McCardDelegate::badgePixmap(
+		    formatBadgeText(id), QStringLiteral("subtitle"), font(), devicePixelRatioF());
+		subBadgeW = qMax(subBadgeW, qCeil(pm.deviceIndependentSize().width()));
+		auto* item = new QListWidgetItem(QIcon(pm), formatDescription(id), m_subFormatList);
 		item->setData(Qt::UserRole, id);
 		item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
 		item->setCheckState(subDisabled.contains(id) ? Qt::Unchecked : Qt::Checked);
 	}
+	m_subFormatList->setIconSize(QSize(subBadgeW, McCardDelegate::kBadgeH));
 
 	auto* subBtnRow  = new QHBoxLayout;
 	m_btnSubFmtUp   = new QPushButton(tr("▲  Up"),   subFmtGroup);
@@ -300,6 +384,13 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	root->addWidget(buttons);
 }
 
+void McSettingsDialog::done(int result)
+{
+	QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
+	s.setValue("settingsDialog/geometry", saveGeometry());
+	QDialog::done(result);
+}
+
 void McSettingsDialog::onAddLanguage()
 {
 	const int idx  = m_langCombo->currentIndex();
@@ -313,7 +404,8 @@ void McSettingsDialog::onAddLanguage()
 	for (int i = 0; i < m_langList->count(); ++i)
 		if (m_langList->item(i)->data(Qt::UserRole).toString() == code) return;
 
-	auto* item = new QListWidgetItem(displayName(code), m_langList);
+	auto* item = new QListWidgetItem(langFlagIcon(code, devicePixelRatioF()),
+	                                 displayName(code), m_langList);
 	item->setData(Qt::UserRole, code);
 }
 
