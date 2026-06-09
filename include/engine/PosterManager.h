@@ -49,6 +49,9 @@ public:
 
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
+	// Fired when TMDB metadata (title, year, rating) has been fetched and written
+	// to the DB.  The UI should update cards without waiting for an app restart.
+	void tmdbDataReady(qint64 fileId, QString title, int year, double rating);
 	// Fired synchronously inside refresh() as soon as the imdb_id is written to DB,
 	// before any async poster download.  Lets the UI update the IMDb button immediately.
 	void imdbIdSaved(qint64 fileId, QString imdbId);

@@ -299,13 +299,29 @@ void McFileListModel::onPosterReady(qint64 fileId, const QString& imagePath)
 		return;
 	}
 	for (int row = 0; row < m_entries.size(); ++row) {
-		if (m_entries.at(row).file.id == fileId) {
-			const QModelIndex idx = index(row);
-			// Specify roles so Qt issues a targeted viewport update rather than a
-			// full doItemsLayout() (which empty roles triggers via SizeHintRole).
-			emit dataChanged(idx, idx, {PosterRole, PosterVersionRole});
-			break;
+		if (m_entries.at(row).file.id != fileId) continue;
+		const QModelIndex idx = index(row);
+		// Include title/year/rating roles: onTmdbDataReady may have updated them
+		// in the same event-loop batch, so we repaint everything at once.
+		emit dataChanged(idx, idx, {PosterRole, PosterVersionRole,
+		                            DisplayTitleRole, DisplayYearRole, RatingRole});
+		break;
+	}
+}
+
+void McFileListModel::onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating)
+{
+	m_ratings[fileId] = rating;
+	for (int row = 0; row < m_entries.size(); ++row) {
+		if (m_entries.at(row).file.id != fileId) continue;
+		auto& entry = m_entries[row];
+		if (!title.isEmpty()) {
+			entry.file.displayTitle = title;
+			entry.file.displayYear  = year;
 		}
+		const QModelIndex idx = index(row);
+		emit dataChanged(idx, idx, {DisplayTitleRole, DisplayYearRole, RatingRole});
+		break;
 	}
 }
 
@@ -405,6 +421,7 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case ImdbRole:          return m_imdbIds.value(e.file.id);
 	case RatingRole:        return m_ratings.value(e.file.id, 0.0);
 	case DisplayTitleRole:  return e.file.displayTitle;
+	case DisplayYearRole:   return e.file.displayYear;
 	case ContainerTitleRole:return e.file.containerTitle;
 	case FolderCountRole: {
 		const QString dir = QFileInfo(e.file.path).absolutePath();

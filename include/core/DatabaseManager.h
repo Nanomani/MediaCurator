@@ -28,7 +28,9 @@ struct FileRecord {
 	qint64      scanRunId = -1;
 	bool        needsRescan = false;
 	QString     containerTitle;   // title from ffprobe format tags; may be absent or junk
+	QString     embeddedImdbId;  // IMDb ID from container tags (e.g. IMDB=tt1234567); not persisted
 	QString     displayTitle;     // TMDB/user-assigned override; preferred over all others
+	int         displayYear  = 0; // release year from TMDB (0 = unknown)
 	bool        ignored = false;  // user-hidden; excluded from library view by default
 };
 
@@ -162,7 +164,7 @@ public:
 	bool clearJobsByStatus(const QString& status);
 	bool promoteJobsToQueued(const QList<qint64>& jobIds);
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);
-	bool updateDisplayTitle(qint64 fileId, const QString& title);
+	bool updateDisplayTitle(qint64 fileId, const QString& title, int year = 0);
 	bool setFileIgnored(qint64 fileId, bool ignored);
 	void deleteJobsForFile(qint64 fileId);
 	QList<JobRecord> queuedJobs() const;

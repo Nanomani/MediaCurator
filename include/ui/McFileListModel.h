@@ -28,6 +28,7 @@ public:
 		DisplayTitleRole  = Qt::UserRole + 8,   // QString — TMDB/user-assigned title override
 		ContainerTitleRole= Qt::UserRole + 9,   // QString — title from ffprobe format tags
 		FolderCountRole   = Qt::UserRole + 10,  // int — number of files sharing same parent folder
+		DisplayYearRole   = Qt::UserRole + 11,  // int — release year from TMDB (0 = unknown)
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -84,6 +85,7 @@ public slots:
 	void setRatingForFile(qint64 fileId, double rating);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
 	void onImdbIdSaved(qint64 fileId, const QString& imdbId);
+	void onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating);
 	void toggleForcedRemoval(qint64 fileId, int streamIndex);
 
 private:

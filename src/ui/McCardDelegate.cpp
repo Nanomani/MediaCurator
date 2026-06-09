@@ -124,6 +124,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.imdbId           = index.data(McFileListModel::ImdbRole).toString();
 		d.rating           = index.data(McFileListModel::RatingRole).toDouble();
 		d.displayTitle      = index.data(McFileListModel::DisplayTitleRole).toString();
+		d.displayYear       = index.data(McFileListModel::DisplayYearRole).toInt();
 		d.containerTitle    = index.data(McFileListModel::ContainerTitleRole).toString();
 		d.folderCount       = index.data(McFileListModel::FolderCountRole).toInt();
 		d.originalLanguage  = file.originalLanguage;
@@ -770,7 +771,9 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 		const QString folderName = QFileInfo(d.filePath).dir().dirName();
 		QString smartTitle;
 		if (!d.displayTitle.isEmpty()) {
-			smartTitle = d.displayTitle;
+			smartTitle = (d.displayYear > 0)
+			    ? d.displayTitle + QStringLiteral(" (") + QString::number(d.displayYear) + QStringLiteral(")")
+			    : d.displayTitle;
 		} else if (!d.containerTitle.isEmpty()
 		           && d.containerTitle.compare(stemmed, Qt::CaseInsensitive) != 0) {
 			smartTitle = d.containerTitle;

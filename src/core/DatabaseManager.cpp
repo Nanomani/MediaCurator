@@ -289,6 +289,7 @@ bool DatabaseManager::initSchema()
 		QSqlQuery m(connection());
 		m.exec("ALTER TABLE files ADD COLUMN container_title TEXT DEFAULT ''");
 		m.exec("ALTER TABLE files ADD COLUMN display_title TEXT DEFAULT ''");
+		m.exec("ALTER TABLE files ADD COLUMN display_year INTEGER DEFAULT 0");
 	}
 
 	// Migration: add ignored flag to files
@@ -431,6 +432,7 @@ std::optional<FileRecord> DatabaseManager::fileById(qint64 id) const
 	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 	r.containerTitle   = q.value("container_title").toString();
 	r.displayTitle     = q.value("display_title").toString();
+	r.displayYear      = q.value("display_year").toInt();
 	r.ignored          = q.value("ignored").toInt() != 0;
 	return r;
 }
@@ -458,6 +460,7 @@ std::optional<FileRecord> DatabaseManager::fileByPath(const QString& path) const
 	r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 	r.containerTitle   = q.value("container_title").toString();
 	r.displayTitle     = q.value("display_title").toString();
+	r.displayYear      = q.value("display_year").toInt();
 	r.ignored          = q.value("ignored").toInt() != 0;
 	return r;
 }
@@ -482,6 +485,7 @@ QList<FileRecord> DatabaseManager::allFiles() const
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 		r.containerTitle   = q.value("container_title").toString();
 		r.displayTitle     = q.value("display_title").toString();
+		r.displayYear      = q.value("display_year").toInt();
 		r.ignored          = q.value("ignored").toInt() != 0;
 		result.append(r);
 	}
@@ -512,6 +516,7 @@ QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit) const
 		r.needsRescan      = q.value("needs_rescan").toInt() != 0;
 		r.containerTitle   = q.value("container_title").toString();
 		r.displayTitle     = q.value("display_title").toString();
+		r.displayYear      = q.value("display_year").toInt();
 		r.ignored          = q.value("ignored").toInt() != 0;
 		result.append(r);
 	}
@@ -881,11 +886,12 @@ bool DatabaseManager::updateFileOriginalLanguage(qint64 fileId, const QString& l
 	return q.exec();
 }
 
-bool DatabaseManager::updateDisplayTitle(qint64 fileId, const QString& title)
+bool DatabaseManager::updateDisplayTitle(qint64 fileId, const QString& title, int year)
 {
 	QSqlQuery q(connection());
-	q.prepare("UPDATE files SET display_title=? WHERE id=?");
+	q.prepare("UPDATE files SET display_title=?, display_year=? WHERE id=?");
 	q.addBindValue(title);
+	q.addBindValue(year);
 	q.addBindValue(fileId);
 	return q.exec();
 }
@@ -1128,7 +1134,16 @@ QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
 		LEFT JOIN poster_cache pc ON pc.file_id = f.id
 		WHERE pc.file_id IS NULL
 		   OR pc.status = 'pending'
-		   OR (pc.status = 'done' AND pc.vote_average = 0 AND pc.imdb_id != '')
+		   OR (pc.status = 'done' AND pc.imdb_id != '' AND (
+		           pc.vote_average = 0
+		        OR f.display_title = ''
+		        OR f.display_title IS NULL
+		   ))
+		   OR (pc.status = 'no_poster' AND (
+		           f.display_title = ''
+		        OR f.display_title IS NULL
+		        OR (pc.imdb_id != '' AND pc.vote_average = 0)
+		   ))
 		ORDER BY f.id
 	)");
 	QList<qint64> ids;

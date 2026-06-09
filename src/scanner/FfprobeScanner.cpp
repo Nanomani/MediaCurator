@@ -140,13 +140,14 @@ FfprobeScanner::ScanResult FfprobeScanner::parseJsonOutput(
 	else
 		file.container = formatName.split(',').first().trimmed();
 
-	// Title from format tags (case-insensitive key lookup)
+	// Title and embedded IDs from format tags (case-insensitive key lookup)
 	const QJsonObject formatTags = format.value("tags").toObject();
 	for (auto it = formatTags.constBegin(); it != formatTags.constEnd(); ++it) {
-		if (it.key().compare("title", Qt::CaseInsensitive) == 0) {
+		const QString key = it.key();
+		if (key.compare("title", Qt::CaseInsensitive) == 0)
 			file.containerTitle = it.value().toString().trimmed();
-			break;
-		}
+		else if (key.compare("imdb", Qt::CaseInsensitive) == 0)
+			file.embeddedImdbId = it.value().toString().trimmed();
 	}
 
 	// ── Build StreamRecords ───────────────────────────────────────────────────

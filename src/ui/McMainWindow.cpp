@@ -73,6 +73,27 @@
 
 namespace {
 
+// Best title to pre-fill the TMDB search dialog for a given file.
+// If the file sits alone in its folder the folder name is almost always cleaner
+// than the encoded filename.  When multiple movies share a folder, prefer the
+// title embedded in the container tags; fall back to parsing the filename.
+static QString smartSuggestedTitle(const Mc::FileRecord& file)
+{
+	const QDir folder = QFileInfo(file.path).dir();
+	static const QStringList kVideoExts{
+	    "*.mkv","*.mp4","*.avi","*.m4v","*.mov","*.wmv","*.ts","*.m2ts","*.mpg","*.mpeg"};
+	const int videoCount = folder.entryList(kVideoExts, QDir::Files).count();
+	if (videoCount == 1)
+		return folder.dirName();
+	if (!file.containerTitle.isEmpty()) {
+		const QString stemmed = QFileInfo(file.path).completeBaseName();
+		if (file.containerTitle.compare(stemmed, Qt::CaseInsensitive) != 0)
+			return file.containerTitle;
+	}
+	return Mc::NfoParser::titleFromFilename(file.filename);
+}
+
+
 // Convert TMDB's ISO 639-1 two-letter code to the ISO 639-2/T three-letter code
 // used in media file stream tags.  Falls back to the input if unknown.
 static QString tmdbLangToIso6392(const QString& iso1)
@@ -327,6 +348,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onPosterReady);
 	connect(&pm, &PosterManager::imdbIdSaved,
 	        m_listModel, &McFileListModel::onImdbIdSaved);
+	connect(&pm, &PosterManager::tmdbDataReady,
+	        m_listModel, &McFileListModel::onTmdbDataReady);
 
 	startLibraryLoader();
 }
@@ -386,7 +409,7 @@ void McMainWindow::setupUi()
 		const QRect  iRect  = m_listView->visualRect(idx);
 		if (pos.x() > iRect.left() + McFileCardDelegate::kPosterW) return;
 		const FileRecord file     = idx.data(McFileListModel::FileRole).value<FileRecord>();
-		const QString    suggested = NfoParser::titleFromFilename(file.filename);
+		const QString    suggested = smartSuggestedTitle(file);
 		const QString    existing  = NfoParser::readImdbId(file.path);
 		ImdbSearchDialog dlg(file.path, suggested, existing, m_profile->tmdbApiKey(), this);
 		if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
@@ -405,7 +428,7 @@ void McMainWindow::setupUi()
 					DatabaseManager::instance().updateFileOriginalLanguage(file.id, origLang);
 				const QString title = dlg.selectedTitle();
 				if (!title.isEmpty())
-					DatabaseManager::instance().updateDisplayTitle(file.id, title);
+					DatabaseManager::instance().updateDisplayTitle(file.id, title, dlg.selectedYear());
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -542,7 +565,7 @@ void McMainWindow::setupUi()
 			const int total = imdbFiles.size();
 			for (int i = 0; i < total; ++i) {
 				const FileRecord& f = imdbFiles[i];
-				const QString suggested = NfoParser::titleFromFilename(f.filename);
+				const QString suggested = smartSuggestedTitle(f);
 				QString existing;
 				if (const auto pr = DatabaseManager::instance().posterForFile(f.id))
 					existing = pr->imdbId;
@@ -567,7 +590,7 @@ void McMainWindow::setupUi()
 					DatabaseManager::instance().updateFileOriginalLanguage(f.id, origLang);
 				const QString title = dlg.selectedTitle();
 				if (!title.isEmpty())
-					DatabaseManager::instance().updateDisplayTitle(f.id, title);
+					DatabaseManager::instance().updateDisplayTitle(f.id, title, dlg.selectedYear());
 			}
 			m_listView->viewport()->repaint();
 			// onPosterReady() calls applyFilter() (beginResetModel) synchronously when
@@ -720,7 +743,7 @@ void McMainWindow::setupUi()
 		if (existingId.isEmpty())
 			existingId = NfoParser::readImdbId(fileOpt->path);
 		ImdbSearchDialog dlg(fileOpt->path,
-		                     NfoParser::titleFromFilename(fileOpt->filename),
+		                     smartSuggestedTitle(*fileOpt),
 		                     existingId,
 		                     m_profile->tmdbApiKey(), this);
 		if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
@@ -740,7 +763,7 @@ void McMainWindow::setupUi()
 					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
 				const QString title = dlg.selectedTitle();
 				if (!title.isEmpty())
-					DatabaseManager::instance().updateDisplayTitle(fileId, title);
+					DatabaseManager::instance().updateDisplayTitle(fileId, title, dlg.selectedYear());
 				m_listView->viewport()->repaint();
 			}
 		}
@@ -764,7 +787,7 @@ void McMainWindow::setupUi()
 				existingId = NfoParser::readImdbId(fileOpt->path);
 
 			ImdbSearchDialog dlg(fileOpt->path,
-			                     NfoParser::titleFromFilename(fileOpt->filename),
+			                     smartSuggestedTitle(*fileOpt),
 			                     existingId,
 			                     m_profile->tmdbApiKey(), this);
 			if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
@@ -789,7 +812,7 @@ void McMainWindow::setupUi()
 					DatabaseManager::instance().updateFileOriginalLanguage(fileId, origLang);
 				const QString title = dlg.selectedTitle();
 				if (!title.isEmpty())
-					DatabaseManager::instance().updateDisplayTitle(fileId, title);
+					DatabaseManager::instance().updateDisplayTitle(fileId, title, dlg.selectedYear());
 			}
 		}
 		m_listView->viewport()->repaint();
@@ -997,6 +1020,7 @@ void McMainWindow::setupStatusBar()
 	m_btnCancelScan = new QPushButton(tr("Cancel Scan"), this);
 	m_btnCancelScan->setVisible(false);
 	connect(m_btnCancelScan, &QPushButton::clicked, this, [this] {
+		m_pendingRoots.clear();  // don't start the next folder after this one finishes
 		if (m_scanWorker) m_scanWorker->cancel();
 		m_btnCancelScan->setEnabled(false);
 		m_btnCancelScan->setText(tr("Cancelling…"));

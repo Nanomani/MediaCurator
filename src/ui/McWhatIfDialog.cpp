@@ -222,6 +222,7 @@ public:
 		vbox->addWidget(m_toggle);
 		vbox->addWidget(m_container);
 
+		m_toggle->setText(title);
 		setExpanded(startExpanded);
 		connect(m_toggle, &QPushButton::clicked, this, [this]() { setExpanded(!m_expanded); });
 	}

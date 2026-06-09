@@ -1,7 +1,10 @@
 ﻿#include "engine/PosterManager.h"
 #include "core/DatabaseManager.h"
+#include "scanner/NfoParser.h"
 
 #include <QDateTime>
+#include <QUrl>
+#include <utility>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -74,6 +77,7 @@ public slots:
 
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
+	void tmdbDataReady(qint64 fileId, QString title, int year, double rating);
 
 private slots:
 	void processNext()
@@ -101,9 +105,9 @@ private:
 		const auto fileOpt = DatabaseManager::instance().fileById(fileId);
 		if (!fileOpt) return;
 
-		const QString filePath  = fileOpt->path;
-		QString       imdbId    = findNfoImdbId(filePath);
-		const QString baseStem  = QFileInfo(filePath).completeBaseName();
+		const QString filePath = fileOpt->path;
+		QString       imdbId   = findNfoImdbId(filePath);
+		const QString baseStem = QFileInfo(filePath).completeBaseName();
 
 		const auto existing = DatabaseManager::instance().posterForFile(fileId);
 
@@ -111,22 +115,38 @@ private:
 		if (imdbId.isEmpty() && existing && !existing->imdbId.isEmpty())
 			imdbId = existing->imdbId;
 
-		// Skip files that are already fully done (poster + rating).
-		// If the poster is done but rating is missing and we have an imdbId,
-		// fall through to fetch the rating from TMDB.
+		// Helper: persist TMDB data from a TmdbInfo result, writing .nfo for durability.
+		// Also emits tmdbDataReady so the UI updates immediately without a DB round-trip.
+		auto applyTmdbInfo = [&](const TmdbInfo& info, const QString& resolvedImdbId) {
+			if (!info.title.isEmpty()) {
+				if (fileOpt->displayTitle.isEmpty())
+					DatabaseManager::instance().updateDisplayTitle(fileId, info.title, info.year);
+				emit tmdbDataReady(fileId, info.title, info.year, info.voteAverage);
+			}
+			// Write .nfo so imdbId survives future DB deletions.
+			if (!resolvedImdbId.isEmpty() && !info.title.isEmpty()
+			    && !QFile::exists(NfoParser::nfoPathFor(filePath)))
+				NfoParser::writeMovieNfo(filePath, resolvedImdbId, info.title, info.year);
+		};
+
+		// Skip files that are already fully done (poster + rating + title).
+		// If any piece is still missing and we have an imdbId, fall through to fetch it.
 		if (existing && existing->status == "done"
 		    && !existing->imagePath.isEmpty()
 		    && QFile::exists(existing->imagePath)) {
-			if (existing->voteAverage > 0.0 || imdbId.isEmpty() || m_tmdbApiKey.isEmpty())
-				return;
-			// Rating-only fetch — poster already on disk.
+			const bool needsRating = existing->voteAverage <= 0.0;
+			const bool needsTitle  = fileOpt->displayTitle.isEmpty();
+			const bool needsNfo    = !QFile::exists(NfoParser::nfoPathFor(filePath));
+			if (!needsRating && !needsTitle && !needsNfo) return;
+			if (imdbId.isEmpty() || m_tmdbApiKey.isEmpty()) return;
 			const TmdbInfo info = fetchTmdbInfo(imdbId);
-			if (info.voteAverage > 0.0) {
+			if (needsRating && info.voteAverage > 0.0) {
 				PosterRecord pr = *existing;
 				pr.voteAverage = info.voteAverage;
 				pr.voteCount   = info.voteCount;
 				DatabaseManager::instance().upsertPosterRecord(pr);
 			}
+			applyTmdbInfo(info, imdbId);
 			return;
 		}
 
@@ -135,8 +155,8 @@ private:
 		rec.imdbId    = imdbId;
 		rec.fetchedAt = QDateTime::currentMSecsSinceEpoch();
 
-		// If the DB was deleted but the posters folder still exists, reuse
-		// whatever file is already on disk rather than re-downloading.
+		// Reuse a poster already on disk (survives DB deletion).
+		// If imdbId is known, look for {imdbId}.jpg; fall back to {baseStem}.jpg.
 		const QString byImdb = imdbId.isEmpty() ? QString() : (m_cacheDir + "/" + imdbId + ".jpg");
 		const QString byBase = m_cacheDir + "/" + baseStem + ".jpg";
 		const QString cached = (!byImdb.isEmpty() && QFile::exists(byImdb)) ? byImdb
@@ -146,41 +166,63 @@ private:
 			rec.source    = "tmdb";
 			rec.status    = "done";
 			rec.imagePath = cached;
-			// Try to fetch rating while we're here — no image download needed,
-			// just a lightweight /find API call.
-			if (!imdbId.isEmpty() && !m_tmdbApiKey.isEmpty()) {
-				const TmdbInfo info = fetchTmdbInfo(imdbId);
-				rec.voteAverage = info.voteAverage;
-				rec.voteCount   = info.voteCount;
+			if (!m_tmdbApiKey.isEmpty()) {
+				if (!imdbId.isEmpty()) {
+					const TmdbInfo info = fetchTmdbInfo(imdbId);
+					rec.voteAverage = info.voteAverage;
+					rec.voteCount   = info.voteCount;
+					applyTmdbInfo(info, imdbId);
+				} else {
+					// Poster named by baseStem — no imdbId known; try title search to recover it.
+					const auto [title, yearHint] = bestTitleAndYear(*fileOpt);
+					if (!title.isEmpty()) {
+						const TmdbInfo info = fetchTmdbInfoByTitle(title, yearHint);
+						if (!info.imdbId.isEmpty()) {
+							rec.imdbId      = info.imdbId;
+							rec.voteAverage = info.voteAverage;
+							rec.voteCount   = info.voteCount;
+							applyTmdbInfo(info, info.imdbId);
+						}
+					}
+				}
 			}
 			DatabaseManager::instance().upsertPosterRecord(rec);
 			emit posterReady(fileId, cached);
 			return;
 		}
 
-		// Nothing cached — fetch from TMDB if we have an API key.
-		// Without a key, mark as "no_poster" so the queue drains cleanly;
-		// setTmdbApiKey() calls resetNoPosterRecords() which resets these to
-		// "pending" when the user later adds a key.
+		// Nothing on disk — need to download.  No API key → drain queue cleanly.
 		if (m_tmdbApiKey.isEmpty()) {
 			rec.status = "no_poster";
 			DatabaseManager::instance().upsertPosterRecord(rec);
 			return;
 		}
 
-		QString imagePath;
+		// Resolve TmdbInfo: by known imdbId, or by title search if we have none.
+		TmdbInfo info;
 		if (!imdbId.isEmpty()) {
-			const TmdbInfo info = fetchTmdbInfo(imdbId);
-			if (!info.posterPath.isEmpty()) {
-				const QString outPath = m_cacheDir + "/" + imdbId + ".jpg";
-				if (downloadImage(
-				        QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(info.posterPath),
-				        outPath))
-					imagePath = outPath;
-			}
-			rec.voteAverage = info.voteAverage;
-			rec.voteCount   = info.voteCount;
+			info = fetchTmdbInfo(imdbId);
+		} else {
+			const auto [title, yearHint] = bestTitleAndYear(*fileOpt);
+			if (!title.isEmpty())
+				info = fetchTmdbInfoByTitle(title, yearHint);
+			if (!info.imdbId.isEmpty())
+				imdbId = info.imdbId;
 		}
+
+		QString imagePath;
+		if (!imdbId.isEmpty() && !info.posterPath.isEmpty()) {
+			const QString outPath = m_cacheDir + "/" + imdbId + ".jpg";
+			if (downloadImage(
+			        QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(info.posterPath),
+			        outPath))
+				imagePath = outPath;
+		}
+		rec.imdbId      = imdbId;
+		rec.voteAverage = info.voteAverage;
+		rec.voteCount   = info.voteCount;
+		if (!info.title.isEmpty())
+			applyTmdbInfo(info, imdbId);
 
 		if (!imagePath.isEmpty()) {
 			rec.source    = "tmdb";
@@ -213,8 +255,16 @@ private:
 
 	// ── TMDB lookup ───────────────────────────────────────────────────────────
 
-	struct TmdbInfo { QString posterPath; double voteAverage = 0.0; int voteCount = 0; };
+	struct TmdbInfo {
+		QString posterPath;
+		double  voteAverage = 0.0;
+		int     voteCount   = 0;
+		QString title;
+		int     year        = 0;
+		QString imdbId;     // populated by fetchTmdbInfoByTitle; caller already has it for fetchTmdbInfo
+	};
 
+	// Look up by known IMDb ID — single API call.
 	TmdbInfo fetchTmdbInfo(const QString& imdbId)
 	{
 		const QUrl url(QStringLiteral(
@@ -227,9 +277,108 @@ private:
 		const QJsonArray results = QJsonDocument::fromJson(data)["movie_results"].toArray();
 		if (results.isEmpty()) return {};
 		const QJsonObject obj = results.first().toObject();
+		const int year = obj["release_date"].toString().left(4).toInt();
 		return { obj["poster_path"].toString(),
 		         obj["vote_average"].toDouble(),
-		         obj["vote_count"].toInt() };
+		         obj["vote_count"].toInt(),
+		         obj["title"].toString(),
+		         year,
+		         imdbId };
+	}
+
+	// Search TMDB by movie title.
+	// With a year hint: take the first result whose release year matches.
+	// Without a year hint (or when year-search finds no match): take TMDB's
+	// top relevance-ranked result — works for the vast majority of mainstream titles.
+	TmdbInfo fetchTmdbInfoByTitle(const QString& title, int yearHint = 0)
+	{
+		auto trySearch = [&](int year) -> TmdbInfo {
+			const QByteArray encoded = QUrl::toPercentEncoding(title);
+			QString urlStr = QStringLiteral(
+			    "https://api.themoviedb.org/3/search/movie?query=%1&api_key=%2")
+			    .arg(QString::fromLatin1(encoded), m_tmdbApiKey);
+			if (year > 0)
+				urlStr += QStringLiteral("&year=%1").arg(year);
+
+			QByteArray data;
+			if (!fetchHttp(QUrl(urlStr), data)) return {};
+
+			const QJsonArray results = QJsonDocument::fromJson(data)["results"].toArray();
+			if (results.isEmpty()) return {};
+
+			// With year: take the first result whose release year matches exactly.
+			// Without year: trust TMDB's popularity ranking and take the top result.
+			QJsonObject obj;
+			if (year > 0) {
+				for (const QJsonValue& v : results) {
+					const int ry = v.toObject()["release_date"].toString().left(4).toInt();
+					if (ry == year) { obj = v.toObject(); break; }
+				}
+			}
+			// No year match (or no year hint): take the top relevance-ranked result.
+			if (obj.isEmpty())
+				obj = results.first().toObject();
+
+			const int resultYear = obj["release_date"].toString().left(4).toInt();
+			const int tmdbId     = obj["id"].toInt();
+
+			// Resolve IMDb ID via external_ids (second lightweight call).
+			QString imdbId;
+			{
+				QByteArray extData;
+				if (fetchHttp(QUrl(QStringLiteral(
+				        "https://api.themoviedb.org/3/movie/%1/external_ids?api_key=%2")
+				        .arg(tmdbId).arg(m_tmdbApiKey)), extData))
+					imdbId = QJsonDocument::fromJson(extData)["imdb_id"].toString();
+			}
+			if (imdbId.isEmpty()) return {};
+
+			return { obj["poster_path"].toString(),
+			         obj["vote_average"].toDouble(),
+			         obj["vote_count"].toInt(),
+			         obj["title"].toString(),
+			         resultYear,
+			         imdbId };
+		};
+
+		// Try with year hint first; fall back to year-less search only if no hint.
+		if (yearHint > 0) {
+			const TmdbInfo info = trySearch(yearHint);
+			if (!info.imdbId.isEmpty()) return info;
+		}
+		return trySearch(0);
+	}
+
+	// Derive the best human-readable search title and an optional year hint from
+	// the file's location and embedded metadata, mirroring the UI's suggestion logic.
+	static std::pair<QString, int> bestTitleAndYear(const FileRecord& file)
+	{
+		auto parseYear = [](const QString& s) -> std::pair<QString, int> {
+			static const QRegularExpression yearRe(R"(\b((?:19|20)\d{2})\b)");
+			const auto m = yearRe.match(s);
+			if (m.hasMatch())
+				return { s.left(m.capturedStart()).simplified(), m.captured(1).toInt() };
+			return { s.simplified(), 0 };
+		};
+
+		static const QStringList kVideoExts{
+		    "*.mkv","*.mp4","*.avi","*.m4v","*.mov","*.wmv","*.ts","*.m2ts","*.mpg","*.mpeg"};
+		const QDir folder = QFileInfo(file.path).dir();
+		const int videoCount = folder.entryList(kVideoExts, QDir::Files).count();
+
+		if (videoCount == 1)
+			return parseYear(folder.dirName());
+
+		if (!file.containerTitle.isEmpty()) {
+			const QString stemmed = QFileInfo(file.path).completeBaseName();
+			if (file.containerTitle.compare(stemmed, Qt::CaseInsensitive) != 0)
+				return parseYear(file.containerTitle);
+		}
+
+		// Filename fallback: replace dots/underscores.
+		QString name = QFileInfo(file.filename).completeBaseName();
+		name.replace('.', ' ').replace('_', ' ');
+		return parseYear(name);
 	}
 
 	// ── HTTP helpers ──────────────────────────────────────────────────────────
@@ -304,6 +453,8 @@ void PosterManager::start(const QString& tmdbApiKey)
 
 	connect(m_worker, &PosterWorker::posterReady,
 	        this,     &PosterManager::posterReady);
+	connect(m_worker, &PosterWorker::tmdbDataReady,
+	        this,     &PosterManager::tmdbDataReady);
 
 	connect(this, &PosterManager::workerTmdbKeyChanged,
 	        m_worker, &PosterWorker::setTmdbApiKey,

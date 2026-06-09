@@ -60,6 +60,14 @@ void ScanWorker::run()
 	// Progress is throttled to at most one signal per 100 ms so the main thread
 	// isn't flooded with cross-thread events on large libraries.
 	// FollowSymlinks is intentionally omitted to avoid infinite loops on cyclic junctions.
+
+	// Files living directly inside these folder names are skipped — they are bonus
+	// content sub-folders, not independent library items.
+	static const QStringList kExtrasFolders = {
+	    "extras", "featurettes", "behind the scenes", "deleted scenes",
+	    "interviews", "scenes", "trailers", "shorts", "specials", "sample"
+	};
+
 	QDirIterator it(m_rootPath, QDirIterator::Subdirectories);
 	while (it.hasNext()) {
 		const QString path = it.next();
@@ -68,6 +76,9 @@ void ScanWorker::run()
 		const QFileInfo fi(path);
 		if (!fi.isFile()) continue;
 		if (!exts.contains(fi.suffix().toLower())) continue;
+
+		// Skip files that live directly inside a known extras sub-folder.
+		if (kExtrasFolders.contains(fi.dir().dirName().toLower())) continue;
 
 		foundPaths.insert(path);
 		++index;
@@ -82,6 +93,9 @@ void ScanWorker::run()
 			const qint64 curSize  = fi.size();
 			if (existing->mtimeMs == curMtime && existing->sizeBytes == curSize) {
 				++skipped;
+				// Enqueue even for unchanged files so PosterManager can backfill
+				// any missing display_title or rating without re-running ffprobe.
+				PosterManager::instance().enqueue(existing->id);
 				continue;
 			}
 		}
@@ -107,9 +121,11 @@ void ScanWorker::run()
 		if (existed) ++updated;
 		else         ++added;
 
-		// Store the IMDb ID from the .nfo sidecar immediately — visible in the UI
-		// without waiting for the poster worker to process the file.
-		const QString imdbId = NfoParser::readImdbId(path);
+		// Resolve IMDb ID: embedded container tag takes priority, then .nfo sidecar.
+		// Store immediately so the poster worker can begin TMDB lookup without delay.
+		const QString imdbId = result.file.embeddedImdbId.isEmpty()
+		    ? NfoParser::readImdbId(path)
+		    : result.file.embeddedImdbId;
 		if (!imdbId.isEmpty()) {
 			db.updateImdbId(*fileId, imdbId);
 			emit imdbIdFound(*fileId, imdbId);
