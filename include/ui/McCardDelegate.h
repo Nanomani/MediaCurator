@@ -50,7 +50,7 @@ public:
 	bool  handlePress(const QPoint& viewportPos, const QRect& itemRect,
 	                  const QFont& viewFont, const QModelIndex& index);
 
-	static constexpr int kPosterW = 110; // poster column width (sized for ~2:3 aspect at typical card height)
+	static constexpr int kPosterW = 100; // poster column width
 
 	// Badge rendering shared with McPreviewDialog's track-badge column.
 	// flagLang: language code whose country flag is drawn before the text;

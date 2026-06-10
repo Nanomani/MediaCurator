@@ -719,7 +719,7 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			}
 		}
 		if (!pm.isNull()) {
-			const int px = posterRect.left() + (kPosterW             - pm.width())  / 2;
+			const int px = posterRect.left();
 			const int py = posterRect.top()  + (option.rect.height() - pm.height()) / 2;
 			painter->drawPixmap(px, py, pm);
 		}
