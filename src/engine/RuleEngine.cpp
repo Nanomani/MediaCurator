@@ -322,6 +322,12 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 					if (!isOriginal && !isUnderstood && langKnown) {
 						td.decision = Decision::Remove;
 						td.reason   = QStringLiteral("Audio language '%1' not understood and not original").arg(s.language);
+					} else if (isOriginal && isUnderstood) {
+						td.reason = QStringLiteral("Original audio — understood language");
+					} else if (isOriginal) {
+						td.reason = QStringLiteral("Original audio language");
+					} else if (isUnderstood) {
+						td.reason = QStringLiteral("Understood language");
 					}
 				}
 			}
@@ -417,6 +423,13 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 				if (td.decision == Decision::Keep && isRedundantSubtitle(s, subtitleTracks)) {
 					td.decision = Decision::Remove;
 					td.reason   = QStringLiteral("Redundant subtitle format — preferred format kept for '%1'").arg(s.language);
+				}
+
+				if (td.decision == Decision::Keep) {
+					if (isForced)          td.reason = QStringLiteral("Forced subtitle — kept by policy");
+					else if (isOrigSub)    td.reason = QStringLiteral("Original-language subtitle — kept by policy");
+					else if (isSdh)        td.reason = QStringLiteral("SDH subtitle — understood language");
+					else if (isUnderstood) td.reason = QStringLiteral("Understood language");
 				}
 			}
 		}

@@ -1483,8 +1483,6 @@ void McMainWindow::onAnalyzeLibrary()
 	if (m_analyzeThread) return;   // already running
 
 	auto& db = DatabaseManager::instance();
-	db.clearJobsByStatus("proposed");
-
 	const auto files = db.allFiles();
 	if (files.isEmpty()) {
 		m_statusLabel->setText(tr("No files in library to analyze."));

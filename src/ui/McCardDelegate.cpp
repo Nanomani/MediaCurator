@@ -582,6 +582,7 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 						lines << tr("Language: %1 (%2)")
 						         .arg(McLanguageFlags::displayName(s.language), s.language);
 					if (s.isDefault)         lines << tr("\xE2\x98\x85  Default track");
+					if (s.isForced)          lines << tr("\xE2\x97\x8F  Forced");
 					if (s.isHearingImpaired) lines << tr("SDH / Hearing impaired");
 					if (isOrig)              lines << tr("\xE2\x97\x8E  Original audio language");
 					if (cls.type != TrackType::Main) {

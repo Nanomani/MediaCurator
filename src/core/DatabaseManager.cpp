@@ -778,7 +778,7 @@ QHash<qint64, QList<StreamRecord>> DatabaseManager::allStreamsGrouped() const
 bool DatabaseManager::hasActiveJobForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT 1 FROM jobs WHERE file_id=? AND status IN ('proposed','queued') LIMIT 1");
+	q.prepare("SELECT 1 FROM jobs WHERE file_id=? AND status IN ('proposed','queued','running') LIMIT 1");
 	q.addBindValue(fileId);
 	return q.exec() && q.next();
 }
