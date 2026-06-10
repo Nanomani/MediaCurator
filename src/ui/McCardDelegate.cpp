@@ -4,6 +4,7 @@
 #include "ui/McLanguageFlags.h"
 #include "classifier/RegexClassifier.h"
 #include "core/ExternalTools.h"
+#include "engine/TrackDecision.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
@@ -670,7 +671,8 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	// floor; cards with more rows than 3 simply grow to show them all.
 	const int trackH     = qMax(totalRows, 3) * (kBadgeH + kRowGap);
 	const int badgeAreaH = hasImdb ? qMax(trackH, kImdbBtnW) : trackH;
-	const int h          = kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + badgeAreaH + kPadBottom;
+	const int h          = qMax(kPadV + kFolderH + kFolderGap + kHeaderH + kSepGap + badgeAreaH + kPadBottom,
+	                             kMinRowH);
 	const QSize result{m_cacheWidth, h};
 	m_sizeCache.insert(row, result);
 	return result;
@@ -875,19 +877,9 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 			qint64 displaySavedBytes = d.savedBytes;
 			const bool isPending = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued"));
-			if (isPending && displaySavedBytes == 0 && d.sizeBytes > 0) {
-				// Fallback for old jobs: proportional estimate
-				double totalBr = 0.0, removedBr = 0.0;
-				for (const auto& s : d.allStreams) {
-					const double br = s.bitRate > 0 ? static_cast<double>(s.bitRate)
-					                : s.codecType == QLatin1String("subtitle") ? 50'000.0 : 0.0;
-					totalBr += br;
-					if (d.removedIndices.contains(s.streamIndex))
-						removedBr += br;
-				}
-				if (totalBr > 0.0)
-					displaySavedBytes = static_cast<qint64>(removedBr / totalBr * d.sizeBytes);
-			}
+			if (isPending && displaySavedBytes == 0 && d.sizeBytes > 0)
+				displaySavedBytes = estimateSavingBytes(
+				    d.allStreams, d.removedIndices, d.sizeBytes, d.durationSec);
 			const bool isEstimate = isPending && (displaySavedBytes > 0);
 			if (displaySavedBytes > 0) {
 				const QString prefix = isEstimate ? QStringLiteral("~-") : QStringLiteral("-");

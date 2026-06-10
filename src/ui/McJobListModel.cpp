@@ -145,6 +145,19 @@ void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 saved
 		applyFilter();
 }
 
+void McJobListModel::removeJobIds(const QList<qint64>& ids)
+{
+	if (ids.isEmpty()) return;
+	const QSet<qint64> idSet(ids.begin(), ids.end());
+	for (int i = m_allEntries.size() - 1; i >= 0; --i) {
+		if (idSet.contains(m_allEntries[i].job.jobId)) {
+			m_allEntries.removeAt(i);
+			m_allCheckStates.removeAt(i);
+		}
+	}
+	applyFilter();
+}
+
 void McJobListModel::setFilterText(const QString& text)
 {
 	if (m_filterText == text) return;

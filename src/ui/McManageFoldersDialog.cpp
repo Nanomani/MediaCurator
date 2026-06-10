@@ -70,6 +70,7 @@ McManageFoldersDialog::McManageFoldersDialog(QWidget* parent)
 	m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
 	m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 	m_table->horizontalHeader()->setMinimumSectionSize(100);
+	m_table->setStyleSheet("QTableWidget::item:focus { outline: none; }");
 
 	connect(m_table, &QTableWidget::customContextMenuRequested,
 	        this, &McManageFoldersDialog::showContextMenu);

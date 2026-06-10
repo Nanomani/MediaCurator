@@ -39,9 +39,16 @@ void SimulateWorker::run()
 
 		RuleEngine engine(m_profile);
 		FileDecision decision = engine.evaluateFile(file, streams);
-		if (decision.removalCount() > 0)
-			++filesAffected;
-		m_decisions.append(std::move(decision));
+		if (decision.removalCount() > 0) {
+			int audioRemoved = 0;
+			for (const auto& td : decision.tracks)
+				if (td.decision == Decision::Remove && td.stream.codecType == QLatin1String("audio"))
+					++audioRemoved;
+			if (!m_profile->skipSubtitleOnlyJobs() || audioRemoved > 0) {
+				++filesAffected;
+				m_decisions.append(std::move(decision));
+			}
+		}
 	}
 
 	emit finished(total, filesAffected);

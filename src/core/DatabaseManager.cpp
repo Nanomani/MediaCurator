@@ -856,6 +856,20 @@ bool DatabaseManager::deleteJob(qint64 jobId)
 	return q.exec();
 }
 
+bool DatabaseManager::deleteJobsBatch(const QList<qint64>& jobIds)
+{
+	if (jobIds.isEmpty()) return true;
+	auto db = connection();
+	db.transaction();
+	QSqlQuery q(db);
+	q.prepare("DELETE FROM jobs WHERE id=?");
+	for (qint64 id : jobIds) {
+		q.addBindValue(id);
+		if (!q.exec()) { db.rollback(); return false; }
+	}
+	return db.commit();
+}
+
 bool DatabaseManager::clearJobsByStatus(const QString& status)
 {
 	QSqlQuery q(connection());

@@ -1313,6 +1313,7 @@ void McMainWindow::startLibraryLoader()
 	}
 
 	updateActionStates();
+	updateSavedLabel();
 
 	// ── Loading progress bar ─────────────────────────────────────────────────
 	// Query the total once — a fast COUNT(*) before the background thread starts.
@@ -1640,6 +1641,7 @@ void McMainWindow::setScanningState(bool scanning)
 	}
 	// Disable scan/analyze actions while scanning; restore proper conditional state when done
 	m_actScanFolder->setEnabled(!scanning);
+	m_actRemoveFolder->setEnabled(!scanning);
 	if (scanning) {
 		m_actScanLibrary->setEnabled(false);
 		m_actAnalyze->setEnabled(false);
@@ -1651,32 +1653,29 @@ void McMainWindow::setScanningState(bool scanning)
 
 void McMainWindow::updateSavedLabel()
 {
-	qint64 total = 0;
-	const auto jobs = DatabaseManager::instance().allJobsForPanel();
-	for (const auto& r : jobs)
-		if (r.status == "done") total += r.savedBytes;
+	const qint64 total = AppSettings::instance()
+	    .value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
 
+	QString text;
 	if (total > 0) {
 		const double gb = total / 1073741824.0;
-		const QString text = gb >= 1.0
+		text = gb >= 1.0
 		    ? tr("Reclaimed: %1 GB").arg(gb, 0, 'f', 2)
 		    : tr("Reclaimed: %1 MB").arg(total / 1048576.0, 0, 'f', 1);
-		m_savedLabel->setText(text);
-		m_savedLabel->setVisible(true);
 	} else {
-		m_savedLabel->setVisible(false);
+		text = tr("Reclaimed: None");
 	}
+	m_savedLabel->setText(text);
+	m_savedLabel->setVisible(true);
 }
 
 void McMainWindow::updateActionStates()
 {
 	const bool hasRoots = !AppSettings::instance().value("scan/roots").toStringList().isEmpty();
 	const bool hasFiles = m_listModel->totalCount() > 0;
-	const bool hasJobs  = !DatabaseManager::instance().allJobsForPanel().isEmpty();
 	m_actScanLibrary->setEnabled(hasRoots);
 	m_actAnalyze->setEnabled(hasFiles);
 	m_actSimulate->setEnabled(hasFiles);
-	if (m_actToggleQueue) m_actToggleQueue->setEnabled(hasJobs);
 }
 
 void McMainWindow::updateJobPanelVisibility(bool forceShow)

@@ -41,7 +41,9 @@ static QVariant jsonToVariant(const QJsonValue& jv, const QVariant& def)
 		return jv.toBool();
 	case QJsonValue::Double:
 		// Preserve int/string semantics from the default value's type.
-		if (def.typeId() == QMetaType::Int || def.typeId() == QMetaType::LongLong)
+		if (def.typeId() == QMetaType::LongLong || def.typeId() == QMetaType::ULongLong)
+			return static_cast<qint64>(jv.toDouble());
+		if (def.typeId() == QMetaType::Int || def.typeId() == QMetaType::UInt)
 			return static_cast<int>(jv.toDouble());
 		return jv.toDouble();
 	case QJsonValue::String:

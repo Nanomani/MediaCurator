@@ -22,6 +22,7 @@
 #include <QCursor>
 #include <QKeyEvent>
 #include <QItemSelectionModel>
+#include <QThreadPool>
 #include <algorithm>
 #include <QDesktopServices>
 #include <QDialog>
@@ -327,7 +328,7 @@ void McJobPanel::setupUi()
 	m_statusFilter->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
 
 	m_sortCombo = new QComboBox(this);
-	m_sortCombo->addItem(tr("Smallest first"),        static_cast<int>(JobSortMode::SmallestFirst));
+	m_sortCombo->addItem(tr("Smallest file first"),        static_cast<int>(JobSortMode::SmallestFirst));
 	m_sortCombo->addItem(tr("Largest savings first"), static_cast<int>(JobSortMode::LargestSavingsFirst));
 	m_sortCombo->setCurrentIndex(AppSettings::instance().value("jobPanel/sortMode", 0).toInt());
 	m_sortCombo->setToolTip(tr("Queue processing order: which job runs next when the queue is active"));
@@ -693,15 +694,18 @@ void McJobPanel::setupUi()
 			    : tr("Remove from Queue");
 			auto* removeAct = menu.addAction(svgIcon(":/icons/delete.svg"), removeLabel);
 			connect(removeAct, &QAction::triggered, this, [this, selectedRemovableJobIds, firstSelRow] {
-				auto& db = DatabaseManager::instance();
-				for (qint64 jid : selectedRemovableJobIds) db.deleteJob(jid);
-				refresh();
+				m_model->removeJobIds(selectedRemovableJobIds);
+				updateFooter();
+				emit jobsChanged(m_model->rowCount());
 				const int n = m_model->rowCount();
 				if (n > 0) {
 					const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
 					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
 					m_listView->scrollTo(next);
 				}
+				QThreadPool::globalInstance()->start([ids = selectedRemovableJobIds] {
+					DatabaseManager::instance().deleteJobsBatch(ids);
+				});
 			});
 		}
 
@@ -916,15 +920,18 @@ void McJobPanel::onRemoveSelected()
 		if (status != "running")
 			toDelete << idx.data(McJobListModel::JobIdRole).toLongLong();
 	}
-	auto& db = DatabaseManager::instance();
-	for (qint64 id : toDelete) db.deleteJob(id);
-	refresh();
+	m_model->removeJobIds(toDelete);
+	updateFooter();
+	emit jobsChanged(m_model->rowCount());
 	const int n = m_model->rowCount();
 	if (n > 0) {
 		const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
 		m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
 		m_listView->scrollTo(next);
 	}
+	QThreadPool::globalInstance()->start([ids = toDelete] {
+		DatabaseManager::instance().deleteJobsBatch(ids);
+	});
 }
 
 void McJobPanel::onStart()

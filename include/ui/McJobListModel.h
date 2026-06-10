@@ -45,6 +45,7 @@ public:
 
 	void reload();
 	void reloadPaged(int limit);
+	void removeJobIds(const QList<qint64>& ids);
 
 	/** Update status + savedBytes for a single job without full reload. */
 	void updateJob(qint64 jobId, const QString& status, qint64 savedBytes = -1);

@@ -27,70 +27,22 @@
 
 namespace {
 
-static bool isLosslessAudio(const Mc::StreamRecord& s)
+static qint64 estimateStreamSizeBytes(const Mc::StreamRecord& s,
+                                       const QList<Mc::StreamRecord>& allStreams,
+                                       qint64 fileSizeBytes,
+                                       double durationSec)
 {
-	if (s.codecType != QLatin1String("audio")) return false;
-	const QString cn = s.codecName.toLower();
-	if (cn == QLatin1String("flac")   || cn == QLatin1String("alac")
-	 || cn == QLatin1String("truehd") || cn == QLatin1String("mlp")
-	 || cn == QLatin1String("tta")    || cn == QLatin1String("wavpack")
-	 || cn.startsWith(QLatin1String("pcm_")))
-		return true;
-	if (cn == QLatin1String("dts")) {
-		const QString cp = s.codecProfile.toUpper();
-		return cp.contains(QLatin1String("MA")) || cp.contains(QLatin1String("HRA"));
+	double totalBr = 0.0;
+	for (const Mc::StreamRecord& sr : allStreams) {
+		totalBr += sr.bitRate > 0 ? static_cast<double>(sr.bitRate)
+		         : sr.codecType == QLatin1String("subtitle") ? 50'000.0 : 0.0;
 	}
-	return false;
-}
-
-static int pcmBitDepth(const QString& cn)
-{
-	const int u = cn.indexOf('_');
-	if (u < 0 || u + 2 >= cn.size()) return 0;
-	int i = u + 1;
-	if (!cn[i].isLetter()) return 0;
-	++i;
-	const int start = i;
-	while (i < cn.size() && cn[i].isDigit()) ++i;
-	return (i > start) ? cn.mid(start, i - start).toInt() : 0;
-}
-
-static qint64 losslessBytesPerSecPerChannel(const Mc::StreamRecord& s)
-{
-	const QString cn = s.codecName.toLower();
-	if (cn.startsWith(QLatin1String("pcm_"))) {
-		if (s.sampleRate <= 0) return -1;
-		const int depth = pcmBitDepth(cn);
-		return (depth > 0) ? static_cast<qint64>(s.sampleRate) * depth / 8 : -1;
-	}
-	if (cn == QLatin1String("truehd") || cn == QLatin1String("mlp")) return 87'500;
-	if (cn == QLatin1String("flac"))    return 56'250;
-	if (cn == QLatin1String("alac"))    return 50'000;
-	if (cn == QLatin1String("tta") || cn == QLatin1String("wavpack")) return 56'250;
-	if (cn == QLatin1String("dts")) {
-		const QString cp = s.codecProfile.toUpper();
-		if (cp.contains(QLatin1String("MA")))  return 87'500;
-		if (cp.contains(QLatin1String("HRA"))) return 62'500;
-	}
-	return -1;
-}
-
-static qint64 estimateStreamBytes(const Mc::StreamRecord& s,
-                                   const QList<Mc::StreamRecord>&,
-                                   qint64,
-                                   double fileDurationSec)
-{
-	if (fileDurationSec <= 0) return -1;
-	if (!isLosslessAudio(s)) {
-		if (s.bitRate > 0)
-			return static_cast<qint64>(s.bitRate / 8.0 * fileDurationSec);
-		if (s.codecType == QLatin1String("subtitle"))
-			return 256LL * 1024;
-		return 0;
-	}
-	const qint64 bpsPerChannel = losslessBytesPerSecPerChannel(s);
-	if (bpsPerChannel < 0) return -1;
-	return static_cast<qint64>(bpsPerChannel * qMax(s.channels, 1) * fileDurationSec);
+	if (durationSec > 0)
+		totalBr = qMax(totalBr, static_cast<double>(fileSizeBytes) * 8.0 / durationSec);
+	if (totalBr <= 0.0) return 0;
+	const double streamBr = s.bitRate > 0 ? static_cast<double>(s.bitRate)
+	                      : s.codecType == QLatin1String("subtitle") ? 50'000.0 : 0.0;
+	return static_cast<qint64>(streamBr / totalBr * static_cast<double>(fileSizeBytes));
 }
 
 static QString buildTrackTooltip(const Mc::StreamRecord& s, bool isOrig)
@@ -249,17 +201,7 @@ void McPreviewDialog::setupUi(const FileDecision& decision)
 			++reasonOther;
 	}
 
-	QList<StreamRecord> allStreams;
-	for (const auto& td : decision.tracks) allStreams << td.stream;
-
-	qint64 estimatedSaving = 0;
-	for (const auto& td : decision.tracks) {
-		if (td.decision != Decision::Remove) continue;
-		const qint64 est = estimateStreamBytes(
-		    td.stream, allStreams,
-		    decision.file.sizeBytes, decision.file.durationSec);
-		if (est > 0) estimatedSaving += est;
-	}
+	const qint64 estimatedSaving = decision.estimatedSavingBytes();
 
 	// ── Stat cells row (shared widget, same style as McBulkSummaryDialog) ────────
 	{
@@ -448,7 +390,7 @@ void McPreviewDialog::populateBeforeTable(QTableWidget* table, const FileDecisio
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
-		    estimateStreamBytes(td.stream, allStreams,
+		    estimateStreamSizeBytes(td.stream, allStreams,
 		                        decision.file.sizeBytes, decision.file.durationSec)));
 
 		const QString decText = decisionText(td.decision)
@@ -510,7 +452,7 @@ void McPreviewDialog::populateAfterTable(QTableWidget* table, const FileDecision
 
 		auto* bitrateItem = new QTableWidgetItem(formatBitrate(td.stream.bitRate));
 		auto* sizeItem    = new QTableWidgetItem(formatStreamSize(
-		    estimateStreamBytes(td.stream, allStreams,
+		    estimateStreamSizeBytes(td.stream, allStreams,
 		                        decision.file.sizeBytes, decision.file.durationSec)));
 		bitrateItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 		sizeItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);

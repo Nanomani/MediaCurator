@@ -18,66 +18,6 @@
 
 namespace {
 
-// ── Lossless size estimation (mirrors McBulkSummaryDialog) ────────────────────
-
-static bool isLosslessAudio(const Mc::StreamRecord& s)
-{
-	if (s.codecType != QLatin1String("audio")) return false;
-	const QString cn = s.codecName.toLower();
-	if (cn == QLatin1String("flac")   || cn == QLatin1String("alac")
-	 || cn == QLatin1String("truehd") || cn == QLatin1String("mlp")
-	 || cn == QLatin1String("tta")    || cn == QLatin1String("wavpack")
-	 || cn.startsWith(QLatin1String("pcm_")))
-		return true;
-	if (cn == QLatin1String("dts")) {
-		const QString cp = s.codecProfile.toUpper();
-		return cp.contains(QLatin1String("MA")) || cp.contains(QLatin1String("HRA"));
-	}
-	return false;
-}
-
-static qint64 losslessBytesPerSecPerChannel(const Mc::StreamRecord& s)
-{
-	const QString cn = s.codecName.toLower();
-	if (cn.startsWith(QLatin1String("pcm_"))) {
-		if (s.sampleRate <= 0) return -1;
-		int depth = 0;
-		const int u = cn.indexOf('_');
-		if (u >= 0 && u + 2 < cn.size() && cn[u+1].isLetter()) {
-			int i = u + 2;
-			const int start = i;
-			while (i < cn.size() && cn[i].isDigit()) ++i;
-			if (i > start) depth = cn.mid(start, i - start).toInt();
-		}
-		return (depth > 0) ? static_cast<qint64>(s.sampleRate) * depth / 8 : -1;
-	}
-	if (cn == QLatin1String("truehd") || cn == QLatin1String("mlp")) return 87'500;
-	if (cn == QLatin1String("flac"))                                  return 56'250;
-	if (cn == QLatin1String("alac"))                                  return 50'000;
-	if (cn == QLatin1String("tta") || cn == QLatin1String("wavpack")) return 56'250;
-	if (cn == QLatin1String("dts")) {
-		const QString cp = s.codecProfile.toUpper();
-		if (cp.contains(QLatin1String("MA")))  return 87'500;
-		if (cp.contains(QLatin1String("HRA"))) return 62'500;
-	}
-	return -1;
-}
-
-static qint64 estimateStreamBytes(const Mc::StreamRecord& s, double durationSec)
-{
-	if (durationSec <= 0) return -1;
-	if (!isLosslessAudio(s)) {
-		if (s.bitRate > 0)
-			return static_cast<qint64>(s.bitRate / 8.0 * durationSec);
-		if (s.codecType == QLatin1String("subtitle"))
-			return 256LL * 1024;
-		return 0;
-	}
-	const qint64 bpsPerCh = losslessBytesPerSecPerChannel(s);
-	if (bpsPerCh < 0) return -1;
-	return static_cast<qint64>(bpsPerCh * qMax(s.channels, 1) * durationSec);
-}
-
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 struct SimStats {
@@ -124,9 +64,6 @@ static SimStats computeStats(const QList<Mc::FileDecision>& decisions)
 				++s.videoRemoved;
 			}
 
-			const qint64 est = estimateStreamBytes(sr, fd.file.durationSec);
-			if (est > 0) s.savedBytes += est;
-
 			const QString& r = td.reason;
 			if (r.contains(QLatin1String("MJPEG"), Qt::CaseInsensitive)
 					|| r.contains(QLatin1String("cover-art"), Qt::CaseInsensitive))
@@ -145,6 +82,7 @@ static SimStats computeStats(const QList<Mc::FileDecision>& decisions)
 			else
 				++s.reasonOther;
 		}
+		s.savedBytes += fd.estimatedSavingBytes();
 	}
 	return s;
 }

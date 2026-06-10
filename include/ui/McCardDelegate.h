@@ -158,6 +158,7 @@ private:
 	static constexpr int kPlayBtnW  = 24; // width and height of the play (▶) button on the right
 	static constexpr int kImdbBtnW  = 24; // width and height of the IMDb shortcut button on the right
 	static constexpr int kPosterGap = 0;  // gap between the poster column right edge and the content area
+	static constexpr int kMinRowH   = 140; // minimum card height; ensures the poster column never looks cramped
 };
 
 } // namespace Mc

@@ -166,6 +166,7 @@ public:
 	bool updateJobSavedBytes(qint64 jobId, qint64 savedBytes);
 	bool updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson);
 	bool deleteJob(qint64 jobId);
+	bool deleteJobsBatch(const QList<qint64>& jobIds);
 	bool clearJobsByStatus(const QString& status);
 	bool promoteJobsToQueued(const QList<qint64>& jobIds);
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);

@@ -394,10 +394,15 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 				    && m_profile->sdhSubtitleMode() == UserProfile::SdhSubtitleMode::PreferSdh
 				    && langsWithSdhSub.contains(normalizeLang(s.language));
 
-				// Commentary subs: remove unless understood (regardless of other keep rules)
-				if (isCommentarySub && !isUnderstood) {
-					td.decision = Decision::Remove;
-					td.reason   = QStringLiteral("Commentary subtitle in non-understood language '%1'").arg(s.language);
+				// Commentary subs: mirror the keepCommentaryIfUnderstood policy used for audio
+				if (isCommentarySub) {
+					if (!m_profile->keepCommentaryIfUnderstood()) {
+						td.decision = Decision::Remove;
+						td.reason   = QStringLiteral("Commentary subtitle — policy: remove all commentary");
+					} else if (!isUnderstood && !langUnknown) {
+						td.decision = Decision::Remove;
+						td.reason   = QStringLiteral("Commentary subtitle in non-understood language '%1'").arg(s.language);
+					}
 				}
 				else if (removedSdhTrack) {
 					td.decision = Decision::Remove;

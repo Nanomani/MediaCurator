@@ -2,6 +2,7 @@
 #include "ui/McJobListModel.h"
 #include "ui/McJobStatsBar.h"
 #include "core/DatabaseManager.h"
+#include "engine/TrackDecision.h"
 
 #include <algorithm>
 
@@ -18,75 +19,6 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-namespace {
-
-static bool isLosslessAudio(const Mc::StreamRecord& s)
-{
-	if (s.codecType != QLatin1String("audio")) return false;
-	const QString cn = s.codecName.toLower();
-	if (cn == QLatin1String("flac")   || cn == QLatin1String("alac")
-	 || cn == QLatin1String("truehd") || cn == QLatin1String("mlp")
-	 || cn == QLatin1String("tta")    || cn == QLatin1String("wavpack")
-	 || cn.startsWith(QLatin1String("pcm_")))
-		return true;
-	if (cn == QLatin1String("dts")) {
-		const QString cp = s.codecProfile.toUpper();
-		return cp.contains(QLatin1String("MA")) || cp.contains(QLatin1String("HRA"));
-	}
-	return false;
-}
-
-static int pcmBitDepth(const QString& cn)
-{
-	const int u = cn.indexOf('_');
-	if (u < 0 || u + 2 >= cn.size()) return 0;
-	int i = u + 1;
-	if (!cn[i].isLetter()) return 0;
-	++i;
-	const int start = i;
-	while (i < cn.size() && cn[i].isDigit()) ++i;
-	return (i > start) ? cn.mid(start, i - start).toInt() : 0;
-}
-
-static qint64 losslessBytesPerSecPerChannel(const Mc::StreamRecord& s)
-{
-	const QString cn = s.codecName.toLower();
-	if (cn.startsWith(QLatin1String("pcm_"))) {
-		if (s.sampleRate <= 0) return -1;
-		const int depth = pcmBitDepth(cn);
-		return (depth > 0) ? static_cast<qint64>(s.sampleRate) * depth / 8 : -1;
-	}
-	if (cn == QLatin1String("truehd") || cn == QLatin1String("mlp")) return 87'500;
-	if (cn == QLatin1String("flac"))    return 56'250;
-	if (cn == QLatin1String("alac"))    return 50'000;
-	if (cn == QLatin1String("tta") || cn == QLatin1String("wavpack")) return 56'250;
-	if (cn == QLatin1String("dts")) {
-		const QString cp = s.codecProfile.toUpper();
-		if (cp.contains(QLatin1String("MA")))  return 87'500;
-		if (cp.contains(QLatin1String("HRA"))) return 62'500;
-	}
-	return -1;
-}
-
-static qint64 estimateStreamBytes(const Mc::StreamRecord& s,
-                                   const QList<Mc::StreamRecord>&,
-                                   qint64,
-                                   double fileDurationSec)
-{
-	if (fileDurationSec <= 0) return -1;
-	if (!isLosslessAudio(s)) {
-		if (s.bitRate > 0)
-			return static_cast<qint64>(s.bitRate / 8.0 * fileDurationSec);
-		if (s.codecType == QLatin1String("subtitle"))
-			return 256LL * 1024;
-		return 0;
-	}
-	const qint64 bpsPerChannel = losslessBytesPerSecPerChannel(s);
-	if (bpsPerChannel < 0) return -1;
-	return static_cast<qint64>(bpsPerChannel * qMax(s.channels, 1) * fileDurationSec);
-}
-
-} // anonymous namespace
 
 namespace Mc {
 
@@ -231,8 +163,10 @@ static BulkStats computeStats()
 		QSet<int> keptIdx;
 		for (const auto& sr : keptStreams) keptIdx.insert(sr.streamIndex);
 
+		QSet<int> removedIdx;
 		for (const StreamRecord& sr : allStreams) {
 			if (keptIdx.contains(sr.streamIndex)) continue;
+			removedIdx.insert(sr.streamIndex);
 			if (sr.codecType == QStringLiteral("audio")) {
 				++s.audioRemoved;
 				if (!sr.language.isEmpty() && sr.language != QStringLiteral("und"))
@@ -244,12 +178,10 @@ static BulkStats computeStats()
 			} else if (sr.codecType == QStringLiteral("video")) {
 				++s.videoRemoved;
 			}
-
-			const qint64 est = estimateStreamBytes(
-			    sr, allStreams,
-			    fileOpt ? fileOpt->sizeBytes : 0LL, durationSec);
-			if (est > 0) s.estimatedSavedBytes += est;
 		}
+
+		const qint64 fileSize = fileOpt ? fileOpt->sizeBytes : 0LL;
+		s.estimatedSavedBytes += estimateSavingBytes(allStreams, removedIdx, fileSize, durationSec);
 
 		// Bucket removal reasons from description text
 		for (const QString& line : job.descriptionText.split('\n', Qt::SkipEmptyParts)) {
