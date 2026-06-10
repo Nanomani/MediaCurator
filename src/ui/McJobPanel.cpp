@@ -433,6 +433,7 @@ void McJobPanel::setupUi()
 	m_listView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 	m_listView->setAlternatingRowColors(true);
 	m_listView->setSpacing(0);
+	m_listView->setResizeMode(QListView::Adjust);
 	m_listView->setContextMenuPolicy(Qt::CustomContextMenu);
 	m_listView->installEventFilter(this);
 
@@ -566,6 +567,7 @@ void McJobPanel::setupUi()
 		// full selection rather than only the right-clicked item.
 		QList<qint64> selectedProposedJobIds;
 		QList<qint64> selectedQueuedJobIds;
+		QList<qint64> selectedFailedJobIds;   // failed or orphaned-running → retryable
 		QList<qint64> selectedRemovableJobIds; // all non-running selected jobs
 		int firstSelRow = idx.row();
 		{
@@ -579,6 +581,8 @@ void McJobPanel::setupUi()
 				if (jid <= 0) continue;
 				if (st == QLatin1String("proposed")) selectedProposedJobIds << jid;
 				else if (st == QLatin1String("queued")) selectedQueuedJobIds << jid;
+				else if (st == QLatin1String("failed") || st == QLatin1String("running"))
+					selectedFailedJobIds << jid;
 				if (st != QLatin1String("running")) selectedRemovableJobIds << jid;
 			}
 			// Ensure the right-clicked item is included even if outside the selection.
@@ -586,6 +590,9 @@ void McJobPanel::setupUi()
 				selectedProposedJobIds.prepend(jobId);
 			else if (status == QLatin1String("queued") && !selectedQueuedJobIds.contains(jobId))
 				selectedQueuedJobIds.prepend(jobId);
+			else if ((status == QLatin1String("failed") || status == QLatin1String("running"))
+			         && !selectedFailedJobIds.contains(jobId))
+				selectedFailedJobIds.prepend(jobId);
 			if (status != QLatin1String("running") && !selectedRemovableJobIds.contains(jobId))
 				selectedRemovableJobIds.prepend(jobId);
 		}
@@ -618,6 +625,24 @@ void McJobPanel::setupUi()
 					DatabaseManager::instance().updateJobStatus(jid, "proposed");
 					m_model->updateJob(jid, "proposed");
 				}
+				updateFooter();
+				const int n = m_model->rowCount();
+				if (n > 0) {
+					const QModelIndex next = m_model->index(qMin(firstSelRow, n - 1), 0);
+					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+					m_listView->scrollTo(next);
+				}
+			});
+			menu.addSeparator();
+		} else if (!selectedFailedJobIds.isEmpty()) {
+			const QString retryLabel = selectedFailedJobIds.size() > 1
+			    ? tr("&Retry %1 Jobs").arg(selectedFailedJobIds.size())
+			    : tr("&Retry Job");
+			auto* retryAct = menu.addAction(svgIcon(":/icons/refresh.svg"), retryLabel);
+			connect(retryAct, &QAction::triggered, this, [this, selectedFailedJobIds, firstSelRow] {
+				DatabaseManager::instance().requeueFailedJobs(selectedFailedJobIds);
+				for (qint64 jid : selectedFailedJobIds)
+					m_model->updateJob(jid, "queued");
 				updateFooter();
 				const int n = m_model->rowCount();
 				if (n > 0) {
@@ -720,11 +745,25 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 		AppSettings::instance().value("jobPanel/sortMode", 0).toInt()));
 
 	connect(queue, &JobQueue::jobStarted, this, [this](qint64 jobId) {
+		// Capture selection before model resets fire (updateJob and/or filter switch
+		// both call applyFilter → beginResetModel which clears the selection model).
+		QSet<qint64> prevSelected;
+		for (const QModelIndex& si : m_listView->selectionModel()->selectedIndexes())
+			prevSelected.insert(si.data(McJobListModel::JobIdRole).toLongLong());
+
 		onJobStatusChanged(jobId, "running");
 		m_jobTimer.start();
 		m_etaTimer->start();
 
-		if (!AppSettings::instance().value("jobPanel/followRunning", true).toBool()) return;
+		if (!AppSettings::instance().value("jobPanel/followRunning", true).toBool()) {
+			// No filter switch, but updateJob may still have reset the model.
+			for (int row = 0; row < m_model->rowCount(); ++row) {
+				const QModelIndex idx = m_model->index(row);
+				if (prevSelected.contains(idx.data(McJobListModel::JobIdRole).toLongLong()))
+					m_listView->selectionModel()->select(idx, QItemSelectionModel::Select);
+			}
+			return;
+		}
 
 		// Any specific filter switches to Running first (no-op if already there)
 		if (!m_statusFilter->currentData().toString().isEmpty()) {
@@ -734,6 +773,13 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 					break;
 				}
 			}
+		}
+
+		// Restore selection for any previously selected items still visible in the new filter.
+		for (int row = 0; row < m_model->rowCount(); ++row) {
+			const QModelIndex idx = m_model->index(row);
+			if (prevSelected.contains(idx.data(McJobListModel::JobIdRole).toLongLong()))
+				m_listView->selectionModel()->select(idx, QItemSelectionModel::Select);
 		}
 
 		// Scroll the job that just started into view. The Running filter also

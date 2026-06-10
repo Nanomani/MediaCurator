@@ -477,6 +477,13 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 		m_view->viewport()->setCursor(Qt::ArrowCursor);
 		break;
 
+	case QEvent::Resize:
+		// Proactively clear the size cache when the viewport is resized so
+		// sizeHint() always recomputes at the new width on the next layout pass.
+		m_sizeCache.clear();
+		m_cacheWidth = 0;
+		break;
+
 	default: break;
 	}
 	return false;
@@ -708,20 +715,27 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	                       kPosterW, option.rect.height());
 	if (!d.posterPath.isEmpty()) {
 		QPixmap pm;
-		const QString cacheKey = QStringLiteral("poster:%1:%2:%3")
-		                             .arg(d.posterPath).arg(option.rect.height()).arg(d.posterVersion);
+		// Cache keyed by path+version only — NOT card height — so poster survives
+		// resize events where badge reflow changes card height (avoids disk re-read
+		// and SmoothTransformation re-scale on every resize).
+		const QString cacheKey = QStringLiteral("poster:%1:%2")
+		                             .arg(d.posterPath).arg(d.posterVersion);
 		if (!QPixmapCache::find(cacheKey, &pm)) {
 			const QPixmap src(d.posterPath);
 			if (!src.isNull()) {
-				pm = src.scaled(kPosterW, option.rect.height(),
-				                Qt::KeepAspectRatio, Qt::SmoothTransformation);
+				pm = src.scaledToWidth(kPosterW, Qt::SmoothTransformation);
 				QPixmapCache::insert(cacheKey, pm);
 			}
 		}
 		if (!pm.isNull()) {
 			const int px = posterRect.left();
-			const int py = posterRect.top()  + (option.rect.height() - pm.height()) / 2;
+			const int py = posterRect.top() + (option.rect.height() - pm.height()) / 2;
+			// Clip to card bounds so tall posters (natural height > card height)
+			// don't bleed into the adjacent card above/below.
+			painter->save();
+			painter->setClipRect(posterRect);
 			painter->drawPixmap(px, py, pm);
+			painter->restore();
 		}
 	}
 
@@ -785,11 +799,12 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			const QString starText  = QStringLiteral("\xe2\x98\x85");
 			const QString scoreText = QStringLiteral("%1").arg(d.rating, 0, 'f', 1);
 			const QString tenText   = QStringLiteral("/10");
-			const int tenW   = QFontMetrics(tenFont).horizontalAdvance(tenText);
-			const int scoreW = QFontMetrics(numFont).horizontalAdvance(scoreText);
-			const int starW  = QFontMetrics(starFont).horizontalAdvance(starText);
-			const int numBase  = midY + QFontMetrics(numFont).ascent()  / 2;
-			const int starBase = midY + QFontMetrics(starFont).ascent() / 2;
+			const QFontMetrics tenFm(tenFont), numFm(numFont), starFm(starFont);
+			const int tenW     = tenFm.horizontalAdvance(tenText);
+			const int scoreW   = numFm.horizontalAdvance(scoreText);
+			const int starW    = starFm.horizontalAdvance(starText);
+			const int numBase  = midY + numFm.ascent()  / 2;
+			const int starBase = midY + starFm.ascent() / 2;
 
 			int x = rightEdge - tenW;
 			painter->save();

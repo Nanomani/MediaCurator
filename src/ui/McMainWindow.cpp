@@ -41,6 +41,7 @@
 #include <QLineEdit>
 #include <QCursor>
 #include <QCloseEvent>
+#include <QKeyEvent>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -451,6 +452,7 @@ void McMainWindow::setupUi()
 	m_listView->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 	m_listView->setAlternatingRowColors(true);
 	m_listView->setSpacing(0);
+	m_listView->setResizeMode(QListView::Adjust);
 	m_listView->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	connect(m_listView, &QListView::customContextMenuRequested,
@@ -1077,14 +1079,41 @@ void McMainWindow::setupStatusBar()
 	statusBar()->addPermanentWidget(m_savedLabel);
 }
 
+void McMainWindow::keyPressEvent(QKeyEvent* event)
+{
+	// On Windows, Ctrl+F4 maps to QKeySequence::Close. Route it through close()
+	// so the active-job guard in closeEvent fires the same as Alt+F4/close button.
+	if (event->matches(QKeySequence::Close)) {
+		close();
+		return;
+	}
+	QMainWindow::keyPressEvent(event);
+}
+
 void McMainWindow::closeEvent(QCloseEvent* event)
 {
 	if (m_jobQueue->hasActiveJob()) {
-		const auto answer = QMessageBox::question(
-		    this, tr("Jobs Running"),
-		    tr("A job is currently running. Closing now will interrupt it and may leave a temporary file on disk.\n\nClose anyway?"),
-		    QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-		if (answer != QMessageBox::Yes) {
+		QMessageBox msg(this);
+		msg.setWindowTitle(tr("Job Running"));
+		msg.setText(tr("A job is currently processing.\n\n"
+		               "Closing immediately will interrupt it and may leave a temporary file on disk."));
+		auto* pauseBtn  = msg.addButton(tr("Pause && Wait"),  QMessageBox::AcceptRole);
+		auto* closeBtn  = msg.addButton(tr("Close Anyway"),   QMessageBox::DestructiveRole);
+		/*auto* cancelBtn =*/ msg.addButton(tr("Cancel"),     QMessageBox::RejectRole);
+		msg.setDefaultButton(pauseBtn);
+		msg.exec();
+
+		if (msg.clickedButton() == pauseBtn) {
+			// Pause the queue so no new job starts, then close automatically
+			// once the current job finishes cleanly.
+			m_jobQueue->pause();
+			connect(m_jobQueue, &JobQueue::jobFinished, this, [this]() {
+				close();
+			}, Qt::SingleShotConnection);
+			event->ignore();
+			return;
+		}
+		if (msg.clickedButton() != closeBtn) {
 			event->ignore();
 			return;
 		}
@@ -1296,6 +1325,10 @@ void McMainWindow::startLibraryLoader()
 	static constexpr int kFirstPageSize = 25;
 
 	auto& db = DatabaseManager::instance();
+
+	// Jobs left in 'running' state from a previous crash/force-close: mark failed
+	// so the model shows them correctly and the user can retry them.
+	db.recoverRunningJobs();
 
 	// ── First page: library + queue (synchronous, splash still visible) ───────
 	// Keep this block as lean as possible — only the two paged queries.

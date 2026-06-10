@@ -169,6 +169,8 @@ public:
 	bool deleteJobsBatch(const QList<qint64>& jobIds);
 	bool clearJobsByStatus(const QString& status);
 	bool promoteJobsToQueued(const QList<qint64>& jobIds);
+	bool requeueFailedJobs(const QList<qint64>& jobIds);
+	bool recoverRunningJobs();
 	bool updateFileOriginalLanguage(qint64 fileId, const QString& lang);
 	bool updateDisplayTitle(qint64 fileId, const QString& title, int year = 0);
 	bool setFileIgnored(qint64 fileId, bool ignored);

@@ -893,6 +893,30 @@ bool DatabaseManager::promoteJobsToQueued(const QList<qint64>& jobIds)
 	return true;
 }
 
+bool DatabaseManager::requeueFailedJobs(const QList<qint64>& jobIds)
+{
+	if (jobIds.isEmpty()) return true;
+	auto db = connection();
+	db.transaction();
+	QSqlQuery q(db);
+	q.prepare("UPDATE jobs SET status='queued', started_at=NULL, finished_at=NULL, "
+	          "result_code=NULL, output_log=NULL WHERE id=? AND status IN ('failed','running')");
+	for (qint64 id : jobIds) {
+		q.addBindValue(id);
+		if (!q.exec()) { db.rollback(); return false; }
+		emit jobStatusChanged(id, "queued");
+	}
+	return db.commit();
+}
+
+bool DatabaseManager::recoverRunningJobs()
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE jobs SET status='failed', finished_at=UNIXEPOCH(), result_code=-1 "
+	          "WHERE status='running'");
+	return q.exec();
+}
+
 bool DatabaseManager::updateFileOriginalLanguage(qint64 fileId, const QString& lang)
 {
 	QSqlQuery q(connection());
