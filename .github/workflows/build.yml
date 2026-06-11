@@ -44,6 +44,9 @@ jobs:
     - name: Build
       run: cmake --build build --parallel
 
+    - name: Download bundled tools (ffprobe + mkvtoolnix)
+      run: powershell -ExecutionPolicy Bypass -File scripts/setup_tools.ps1
+
     - name: Install NSIS
       run: |
         choco install nsis -y --no-progress
