@@ -13,6 +13,34 @@ set(CPACK_PACKAGE_HOMEPAGE_URL    "https://github.com/bleze/MediaCurator")
 set(CPACK_RESOURCE_FILE_LICENSE   "${CMAKE_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_EXECUTABLES     "MediaCurator;MediaCurator")
 
+# ── Bundle external tools (Windows only — populated by scripts/setup_tools.ps1)
+if(WIN32)
+    set(_tools_win "${CMAKE_SOURCE_DIR}/tools/windows")
+
+    if(EXISTS "${_tools_win}/ffprobe.exe")
+        install(PROGRAMS "${_tools_win}/ffprobe.exe"
+                DESTINATION "tools/windows")
+    else()
+        message(WARNING
+            "tools/windows/ffprobe.exe not found — run scripts/setup_tools.ps1 before packaging.")
+    endif()
+
+    if(IS_DIRECTORY "${_tools_win}/mkvtoolnix")
+        install(DIRECTORY "${_tools_win}/mkvtoolnix"
+                DESTINATION "tools/windows"
+                USE_SOURCE_PERMISSIONS)
+    else()
+        message(WARNING
+            "tools/windows/mkvtoolnix/ not found — run scripts/setup_tools.ps1 before packaging.")
+    endif()
+endif()
+
+# ── Third-party licence notices (required by LGPL / GPL) ──────────────────────
+if(EXISTS "${CMAKE_SOURCE_DIR}/resources/third_party_licenses")
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/resources/third_party_licenses/"
+            DESTINATION "licenses/third_party")
+endif()
+
 # ── Windows — NSIS installer (.exe) ───────────────────────────────────────────
 if(WIN32)
     set(CPACK_GENERATOR "NSIS")
@@ -25,6 +53,10 @@ if(WIN32)
         set(CPACK_NSIS_MUI_ICON    "${_ico}")
         set(CPACK_NSIS_MUI_UNIICON "${_ico}")
     endif()
+    # Programs & Features icon — must point to a file that still exists when the
+    # user opens Add/Remove Programs AFTER install.  Using the main exe (which
+    # has the icon embedded) avoids a broken icon during or after uninstall.
+    set(CPACK_NSIS_INSTALLED_ICON_NAME "MediaCurator.exe")
     set(CPACK_NSIS_DISPLAY_NAME        "MediaCurator ${PROJECT_VERSION}")
     set(CPACK_NSIS_PACKAGE_NAME        "MediaCurator")
     set(CPACK_NSIS_URL_INFO_ABOUT      "https://github.com/bleze/MediaCurator")

@@ -1,0 +1,17 @@
+FFprobe (part of FFmpeg)
+========================
+Version bundled: 7.1
+Source:          https://www.gyan.dev/ffmpeg/builds/
+Upstream source: https://ffmpeg.org/
+
+FFmpeg is free software; you can redistribute it and/or modify it under the
+terms of the GNU Lesser General Public License (LGPL) version 2.1 or later.
+The build bundled with MediaCurator uses only LGPL-licensed components.
+
+A copy of the LGPL v2.1 is available at:
+  https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+You may obtain the FFmpeg source code from:
+  https://ffmpeg.org/download.html
+
+Copyright (c) 2000-2024 the FFmpeg developers.

@@ -25,8 +25,16 @@ QString ExternalTools::findTool(const QString& name) const
 	const QString platformDir = "linux";
 	const QString ext;
 #endif
-	const QString candidate = exeDir + "/tools/" + platformDir + "/" + name + ext;
-	return QFile::exists(candidate) ? candidate : name + ext;
+	// mkvmerge/mkvextract live in a dedicated subfolder so their bundled DLLs
+	// stay isolated from the app's own Qt/MSVC runtime copies.
+	const QString base = exeDir + "/tools/" + platformDir + "/";
+	for (const QString& candidate : {
+			base + name + ext,
+			base + "mkvtoolnix/" + name + ext,
+		}) {
+		if (QFile::exists(candidate)) return candidate;
+	}
+	return name + ext;
 }
 
 QString ExternalTools::ffprobePath()     const { if (m_ffprobePath.isEmpty())     m_ffprobePath     = findTool("ffprobe");     return m_ffprobePath; }

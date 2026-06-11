@@ -1,0 +1,16 @@
+MKVToolNix (mkvmerge)
+=====================
+Version bundled: 88.0
+Source:          https://mkvtoolnix.download/
+Upstream source: https://gitlab.com/mbunkus/mkvtoolnix
+
+MKVToolNix is free software distributed under the GNU General Public License
+(GPL) version 2 or later.
+
+A copy of the GPL v2 is available at:
+  https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
+You may obtain the MKVToolNix source code from:
+  https://gitlab.com/mbunkus/mkvtoolnix
+
+Copyright (c) 2003-2024 Moritz Bunkus <moritz@bunkus.org>
