@@ -446,8 +446,9 @@ Qt::ItemFlags McJobListModel::flags(const QModelIndex& index) const
 {
 	if (!index.isValid()) return Qt::NoItemFlags;
 	Qt::ItemFlags f = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-	// Only proposed jobs are user-checkable
-	if (m_entries.at(index.row()).job.status == "proposed")
+	// Proposed and queued (not yet started) jobs are user-checkable
+	const auto& st = m_entries.at(index.row()).job.status;
+	if (st == "proposed" || st == "queued")
 		f |= Qt::ItemIsUserCheckable;
 	return f;
 }
@@ -459,7 +460,7 @@ void McJobListModel::toggleStream(const QModelIndex& index, int streamIndex)
 	if (!index.isValid() || index.row() >= m_entries.size()) return;
 
 	JobCardEntry& filt = m_entries[index.row()];
-	if (filt.job.status != "proposed") return;
+	if (filt.job.status != "proposed" && filt.job.status != "queued") return;
 
 	const qint64 jobId = filt.job.jobId;
 

@@ -61,8 +61,8 @@ public:
 	/** IDs of all jobs with a given status. */
 	QList<qint64> jobIdsByStatus(const QString& status) const;
 
-	// Toggle a stream's inclusion in a Proposed job's kept-tracks list.
-	// No-op if the job is not Proposed. Persists the new command args to DB.
+	// Toggle a stream's inclusion in a Proposed or Queued job's kept-tracks list.
+	// No-op if the job is Running, Done, Failed, or Cancelled. Persists the new command args to DB.
 	void toggleStream(const QModelIndex& index, int streamIndex);
 
 	static QList<StreamRecord> computeKeptStreams(

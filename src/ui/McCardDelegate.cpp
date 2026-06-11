@@ -68,7 +68,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.durationSec      = index.data(McJobListModel::DurationRole).toDouble();
 		d.progress         = index.data(McJobListModel::ProgressRole).toInt();
 		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
-		d.toggleable        = (d.status == QLatin1String("proposed"));
+		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued"));
 		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
 		d.allStreams         = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 		const auto kept    = index.data(McJobListModel::KeptStreamsRole).value<QList<StreamRecord>>();
@@ -457,10 +457,12 @@ bool McCardDelegate::eventFilter(QObject* obj, QEvent* event)
 
 			bool overInteractive = hitTestInteractive(pos, m_view->visualRect(cur), hasImdb);
 			if (!overInteractive && m_mode == Mode::JobQueue
-			    && cur.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")) {
-				const auto streams = cur.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
+			    && (cur.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
+			        || cur.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))) {
+				const auto    streams  = cur.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
+				const QString origLang = cur.data(McJobListModel::OriginalLanguageRole).toString();
 				overInteractive = (hitTestBadgeStream(pos, m_view->visualRect(cur),
-				                                      streams, m_view->font(), hasImdb) >= 0);
+				                                      streams, m_view->font(), hasImdb, origLang) >= 0);
 			}
 			m_view->viewport()->setCursor(overInteractive ? Qt::PointingHandCursor : Qt::ArrowCursor);
 		} else {
@@ -509,9 +511,11 @@ bool McCardDelegate::handlePress(const QPoint& pos, const QRect& itemRect,
 	}
 
 	if (m_mode == Mode::JobQueue
-	    && index.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")) {
-		const auto streams = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
-		const int streamIdx = hitTestBadgeStream(pos, itemRect, streams, viewFont, hasImdb);
+	    && (index.data(McJobListModel::StatusRole).toString() == QLatin1String("proposed")
+	        || index.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))) {
+		const auto    streams  = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
+		const QString origLang = index.data(McJobListModel::OriginalLanguageRole).toString();
+		const int streamIdx = hitTestBadgeStream(pos, itemRect, streams, viewFont, hasImdb, origLang);
 		if (streamIdx >= 0) {
 			emit streamToggleRequested(index, streamIdx);
 			return true;
