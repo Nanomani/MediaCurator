@@ -1793,7 +1793,7 @@ void McMainWindow::onDonate()
 	auto* dlg = new QDialog(this);
 	dlg->setWindowTitle(tr("Support MediaCurator"));
 	dlg->setAttribute(Qt::WA_DeleteOnClose);
-	dlg->setFixedWidth(420);
+	dlg->setFixedWidth(460);
 
 	auto* layout = new QVBoxLayout(dlg);
 	layout->setSpacing(10);
@@ -1806,51 +1806,121 @@ void McMainWindow::onDonate()
 	intro->setWordWrap(true);
 	layout->addWidget(intro);
 
-	layout->addSpacing(6);
+	layout->addSpacing(8);
 
-	auto* ghBtn = new QPushButton(svgIcon(":/icons/link.svg"), tr("GitHub Sponsors"), dlg);
-	connect(ghBtn, &QPushButton::clicked, []() {
-		QDesktopServices::openUrl(QUrl("https://github.com/sponsors/your-username"));
+	auto* columns = new QHBoxLayout;
+	columns->setSpacing(16);
+
+	// Build the badge first so we can measure its exact height for PayPal alignment
+	auto* preferredBadge = new QLabel(tr("★  Preferred"), dlg);
+	preferredBadge->setStyleSheet(QStringLiteral(
+		"color: white; background-color: #F7931A; border-radius: 4px;"
+		" padding: 3px 12px; font-weight: bold; border: none;"));
+	preferredBadge->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+	preferredBadge->ensurePolished();
+	// PayPal title must start at: badge height + 1px panel border + 8px panel top margin
+	const int paypalTopOffset = preferredBadge->sizeHint().height() + 1 + 8;
+
+	// ---- PayPal column ----
+	auto* paypalCol = new QVBoxLayout;
+	paypalCol->setSpacing(0);
+	paypalCol->addSpacing(paypalTopOffset);
+
+	auto* paypalLabel = new QLabel(tr("PayPal"), dlg);
+	paypalLabel->setStyleSheet("font-weight: bold;");
+	paypalLabel->setAlignment(Qt::AlignHCenter);
+	paypalCol->addWidget(paypalLabel);
+	paypalCol->addSpacing(6);
+
+	auto* paypalQrLabel = new QLabel(dlg);
+	{
+		QPixmap qr(":/icons/paypal_qr.png");
+		if (!qr.isNull())
+			paypalQrLabel->setPixmap(qr.scaled(180, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+	}
+	paypalQrLabel->setAlignment(Qt::AlignHCenter);
+	paypalCol->addWidget(paypalQrLabel);
+	paypalCol->addSpacing(6);
+
+	const QString paypalUrl = QStringLiteral("https://paypal.me/blezedk");
+	auto* paypalRow = new QHBoxLayout;
+	auto* paypalEdit = new QLineEdit(QStringLiteral("paypal.me/blezedk"), dlg);
+	paypalEdit->setReadOnly(true);
+	paypalEdit->setFrame(false);
+	paypalEdit->setStyleSheet("background: transparent;");
+	paypalRow->addWidget(paypalEdit, 1);
+	auto* paypalCopyBtn = new QPushButton(svgIcon(":/icons/copy.svg"), QString{}, dlg);
+	paypalCopyBtn->setFixedSize(32, 26);
+	paypalCopyBtn->setToolTip(tr("Copy to clipboard"));
+	connect(paypalCopyBtn, &QPushButton::clicked, [paypalUrl]() {
+		QApplication::clipboard()->setText(paypalUrl);
 	});
-	layout->addWidget(ghBtn);
-
-	auto* bmcBtn = new QPushButton(svgIcon(":/icons/link.svg"), tr("Buy Me a Coffee"), dlg);
-	connect(bmcBtn, &QPushButton::clicked, []() {
-		QDesktopServices::openUrl(QUrl("https://buymeacoffee.com/your-username"));
+	paypalRow->addWidget(paypalCopyBtn);
+	auto* paypalOpenBtn = new QPushButton(svgIcon(":/icons/link.svg"), QString{}, dlg);
+	paypalOpenBtn->setFixedSize(32, 26);
+	paypalOpenBtn->setToolTip(tr("Open in browser"));
+	connect(paypalOpenBtn, &QPushButton::clicked, [paypalUrl]() {
+		QDesktopServices::openUrl(QUrl(paypalUrl));
 	});
-	layout->addWidget(bmcBtn);
+	paypalRow->addWidget(paypalOpenBtn);
+	paypalCol->addLayout(paypalRow);
+	paypalCol->addStretch();
 
-	layout->addSpacing(6);
+	columns->addLayout(paypalCol, 1);
 
-	auto* lightningLabel = new QLabel(tr("⚡ Lightning"), dlg);
-	lightningLabel->setStyleSheet("font-weight: bold;");
-	layout->addWidget(lightningLabel);
+	// ---- Lightning column (preferred) ----
+	// Badge sits directly above the panel with 0 spacing → appears to rest on the border
+	auto* lightningOuter = new QVBoxLayout;
+	lightningOuter->setSpacing(0);
 
-	// QR code — centered, scaled to 180 px
-	auto* qrLabel = new QLabel(dlg);
+	auto* badgeRow = new QHBoxLayout;
+	badgeRow->addStretch();
+	badgeRow->addWidget(preferredBadge);
+	badgeRow->addStretch();
+	lightningOuter->addLayout(badgeRow);
+
+	auto* lightningPanel = new QWidget(dlg);
+	lightningPanel->setObjectName("lightningPanel");
+	lightningPanel->setStyleSheet(
+		"#lightningPanel { border: 1px solid #F7931A; border-radius: 8px; }");
+
+	auto* lightningCol = new QVBoxLayout(lightningPanel);
+	lightningCol->setSpacing(6);
+	lightningCol->setContentsMargins(8, 8, 8, 8);
+
+	auto* lightningLabel = new QLabel(tr("⚡ Lightning"), lightningPanel);
+	lightningLabel->setStyleSheet("font-weight: bold; border: none;");
+	lightningLabel->setAlignment(Qt::AlignHCenter);
+	lightningCol->addWidget(lightningLabel);
+
+	auto* qrLabel = new QLabel(lightningPanel);
 	{
 		QPixmap qr(":/icons/lightning_qr.png");
 		qrLabel->setPixmap(qr.scaled(180, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 	}
 	qrLabel->setAlignment(Qt::AlignHCenter);
-	layout->addWidget(qrLabel);
+	lightningCol->addWidget(qrLabel);
 
 	auto* lightningRow = new QHBoxLayout;
-	auto* lightningEdit = new QLineEdit(QStringLiteral("bleze@cake.cash"), dlg);
+	auto* lightningEdit = new QLineEdit(QStringLiteral("bleze@cake.cash"), lightningPanel);
 	lightningEdit->setReadOnly(true);
 	lightningEdit->setFrame(false);
-	lightningEdit->setStyleSheet("background: transparent;");
+	lightningEdit->setStyleSheet("background: transparent; border: none;");
 	lightningRow->addWidget(lightningEdit, 1);
-	auto* copyBtn = new QPushButton(tr("Copy"), dlg);
-	copyBtn->setFixedWidth(64);
-	connect(copyBtn, &QPushButton::clicked, [lightningEdit, copyBtn]() {
+	auto* lightningCopyBtn = new QPushButton(svgIcon(":/icons/copy.svg"), QString{}, lightningPanel);
+	lightningCopyBtn->setFixedSize(32, 26);
+	lightningCopyBtn->setToolTip(tr("Copy to clipboard"));
+	connect(lightningCopyBtn, &QPushButton::clicked, [lightningEdit]() {
 		QApplication::clipboard()->setText(lightningEdit->text());
-		copyBtn->setText(tr("Copied!"));
-		QTimer::singleShot(1500, copyBtn, [copyBtn]() { copyBtn->setText(tr("Copy")); });
 	});
-	lightningRow->addWidget(copyBtn);
-	layout->addLayout(lightningRow);
+	lightningRow->addWidget(lightningCopyBtn);
+	lightningCol->addLayout(lightningRow);
+	lightningCol->addStretch();
 
+	lightningOuter->addWidget(lightningPanel, 1);
+	columns->addLayout(lightningOuter, 1);
+
+	layout->addLayout(columns);
 	layout->addStretch();
 
 	auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Close, dlg);

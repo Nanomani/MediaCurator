@@ -1,49 +1,87 @@
-## Building MediaCurator on Windows (Visual Studio 2026)
+## Building MediaCurator
 
 ### Prerequisites
-1. **Visual Studio 2026** with "Desktop development with C++" workload
-2. **Qt 6.7+** installed via Qt Maintenance Tool
-   - During install, select: MSVC 2022 64-bit component
-3. **CMake 3.25+** (ships with VS 2026, or install standalone)
-4. **vcpkg** (for nlohmann/json)
-5. External tools: run `scripts/setup_tools.ps1` once after clone
+
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| Visual Studio | 2026 | "Desktop development with C++" workload |
+| Qt | 6.8.3 LTS | MSVC 2022 64-bit component via Qt Maintenance Tool |
+| CMake | 3.25+ | Ships with VS 2026, or install standalone |
+
+There is no external package manager. `nlohmann/json` 3.11.3 is vendored at `third_party/nlohmann/json.hpp`.
 
 ---
 
-### Step 1 — Clone and set up
+### Windows (Visual Studio 2026)
+
+#### Step 1 — Clone
+
 ```powershell
 git clone https://github.com/yourusername/MediaCurator.git
 cd MediaCurator
+```
+
+#### Step 2 — Create CMakeUserPresets.json
+
+This file is gitignored (local only). Create it in the repo root and adjust the Qt path to match your install:
+
+```json
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "local-release",
+      "inherits": "release",
+      "environment": {
+        "Qt6_DIR": "D:/Development/Environment/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6"
+      }
+    },
+    {
+      "name": "local-debug",
+      "inherits": "debug",
+      "environment": {
+        "Qt6_DIR": "D:/Development/Environment/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6"
+      }
+    }
+  ]
+}
+```
+
+#### Step 3 — Download tool binaries (one-time)
+
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts/setup_tools.ps1
 ```
 
-### Step 2 — Bootstrap vcpkg (one-time)
+This places `ffprobe.exe` and `mkvmerge.exe` in `tools/windows/`.
+
+#### Step 4 — Configure and build
+
 ```powershell
-git clone https://github.com/microsoft/vcpkg.git
-.\vcpkg\bootstrap-vcpkg.bat
-.\vcpkg\vcpkg integrate install
+cmake --preset local-release
+cmake --build --preset local-release
 ```
 
-### Step 3 — Configure (adjust Qt path to match your install)
-```powershell
-cmake -B build `
-  -G "Visual Studio 17 2022" -A x64 `
-  -DQt6_DIR="C:/Qt/6.7.2/msvc2022_64/lib/cmake/Qt6" `
-  -DCMAKE_TOOLCHAIN_FILE="vcpkg/scripts/buildsystems/vcpkg.cmake"
-```
+Or open `build/MediaCurator.sln` in Visual Studio 2026 and build from the IDE.
 
-### Step 4 — Open in Visual Studio 2026
-```powershell
-start build/MediaCurator.sln
-```
-Or build from the command line:
-```powershell
-cmake --build build --config Release
-```
+#### Step 5 — Run
 
-### Step 5 — Run
 ```
 build/bin/Release/MediaCurator.exe
+```
+
+---
+
+### macOS / Linux
+
+Use the `release` preset (no `CMakeUserPresets.json` needed if Qt is on `PATH` or in a standard location):
+
+```bash
+# Set Qt path if not auto-detected
+export Qt6_DIR=/path/to/Qt/6.8.3/gcc_64/lib/cmake/Qt6
+
+cmake --preset release
+cmake --build --preset release
 ```
 
 ---
@@ -51,17 +89,17 @@ build/bin/Release/MediaCurator.exe
 ### Common issues
 
 **Qt6 not found**
-Set `Qt6_DIR` explicitly as shown above. Common paths:
-- `C:/Qt/6.7.2/msvc2022_64/lib/cmake/Qt6`
-- `C:/Qt/6.8.0/msvc2022_64/lib/cmake/Qt6`
+
+Set `Qt6_DIR` in `CMakeUserPresets.json` (Windows) or as an env var (macOS/Linux). Typical paths:
+
+- Windows: `D:/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6`
+- macOS: `~/Qt/6.8.3/macos/lib/cmake/Qt6`
+- Linux: `~/Qt/6.8.3/gcc_64/lib/cmake/Qt6`
 
 **QSQLITE driver not found at runtime**
-Run `windeployqt` on the output exe, or copy `sqldrivers/qsqlite.dll` next to the exe.
-The CMakeLists.txt does this automatically via the POST_BUILD step if `windeployqt` is in PATH.
 
-**nlohmann_json not found**
-Make sure you passed `-DCMAKE_TOOLCHAIN_FILE=vcpkg/...` to cmake and vcpkg is bootstrapped.
+The `CMakeLists.txt` POST_BUILD step runs `windeployqt` automatically if it is on `PATH`. If the driver is still missing, copy `sqldrivers/qsqlite.dll` next to the executable.
 
 **Tools directory empty**
-Run `scripts/setup_tools.ps1` first, or manually place ffprobe.exe and mkvmerge.exe
-in `tools/windows/`.
+
+Run `scripts/setup_tools.ps1` (Windows) or manually place `ffprobe` and `mkvmerge` in `tools/`.

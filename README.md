@@ -47,7 +47,7 @@ For a TMDB API key (free), visit [themoviedb.org/settings/api](https://www.themo
 
 ## Building from Source
 
-MediaCurator is written in C++20 with Qt 6.8+. Dependencies are managed via vcpkg.
+MediaCurator is written in C++20 with Qt 6.8+. There is no external package manager — `nlohmann/json` is vendored at `third_party/`.
 
 ```powershell
 # Windows
@@ -61,7 +61,7 @@ cmake --preset release
 cmake --build --preset release
 ```
 
-See `CLAUDE.md` for detailed environment setup (Qt paths, vcpkg, compiler).
+See `docs/BUILDING.md` for detailed environment setup and CMakeUserPresets configuration.
 
 After building, place the tool binaries alongside the executable:
 
@@ -82,15 +82,15 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 ## Donate
 
-If MediaCurator saves you money on storage or just makes managing your media library less painful, consider saying thanks or supporting continued development via:
+If MediaCurator saves you money on storage or just makes managing your media library less painful, consider saying thanks or supporting continued development:
 
-- [GitHub Sponsors](https://github.com/sponsors/your-username)
-- [Buy Me a Coffee](https://buymeacoffee.com/your-username)
-- ⚡ Lightning: `bleze@cake.cash`
+| Platform | Link | Fee |
+|----------|------|-----|
+| PayPal | [paypal.me/blezedk](https://paypal.me/blezedk) | ~3% |
+| ⚡ Lightning | `bleze@cake.cash` | ~0% |
 
 ## Roadmap
 
-- Subtitle search and download (OpenSubtitles integration)
-- Poster and backdrop browser with Plex-compatible export
-- Backdrop / fanart fetching
-- Remove folder from library
+- Subtitle download — find and save `.srt` files for movies with no subtitles (Kodi/Plex-compatible naming)
+- Poster selection — browse all available TMDB posters and pick the best one
+- Fanart / backdrop selection — fetch and save backdrop images as `fanart.jpg` for Plex and Kodi

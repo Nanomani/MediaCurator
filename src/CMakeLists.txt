@@ -171,9 +171,11 @@ qt_add_resources(MediaCurator "mc_resources"
         resources/icons/vlc.svg
         resources/icons/dollar.svg
         resources/icons/lightning_qr.png
+        resources/icons/paypal_qr.png
         resources/icons/block.svg
         resources/icons/visibility_off.svg
         resources/icons/legend_toggle.svg
+        resources/icons/copy.svg
 )
 
 # Country flags for track-badge language icons (lipis/flag-icons, MIT —
