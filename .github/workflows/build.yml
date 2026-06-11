@@ -147,9 +147,7 @@ jobs:
       run: cmake --build build --parallel
 
     - name: Download bundled tools (ffprobe + mkvtoolnix)
-      run: |
-        sudo apt-get install -y --no-install-recommends patchelf
-        bash scripts/setup_tools.sh
+      run: bash scripts/setup_tools.sh
 
     - name: Package (DEB)
       run: cpack --config build/CPackConfig.cmake -C Release -B build/packages

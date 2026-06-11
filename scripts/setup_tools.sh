@@ -79,35 +79,12 @@ if [[ ! -f "$MKV_BIN" ]] || $FORCE; then
                 chmod +x "$MKV_DIR/$BIN_NAME"
         done
     else
-        echo "  Downloading AppImage from mkvtoolnix.download..."
-        MKV_URL="https://mkvtoolnix.download/linux/releases/${MKV_VERSION}/MKVToolNix_GUI-${MKV_VERSION}-x86_64.AppImage"
-        TMP_IMG=$(mktemp /tmp/mkvtoolnix-XXXXXX.AppImage)
-        TMP_DIR=$(mktemp -d /tmp/mkvtoolnix-XXXXXX)
-        curl -fsSL "$MKV_URL" -o "$TMP_IMG"
-        chmod +x "$TMP_IMG"
-
-        echo "  Extracting AppImage..."
-        (cd "$TMP_DIR" && "$TMP_IMG" --appimage-extract > /dev/null 2>&1)
-
+        echo "  Installing via apt..."
+        sudo apt-get install -y --no-install-recommends mkvtoolnix
         for BIN_NAME in mkvmerge mkvextract mkvpropedit mkvinfo; do
-            SRC=$(find "$TMP_DIR/squashfs-root" -name "$BIN_NAME" -not -path "*/lib/*" -type f | head -1)
-            if [[ -n "$SRC" ]]; then
-                cp "$SRC" "$MKV_DIR/"
-                chmod +x "$MKV_DIR/$BIN_NAME"
-            fi
+            BIN_PATH=$(command -v "$BIN_NAME" 2>/dev/null || true)
+            [[ -n "$BIN_PATH" ]] && cp "$BIN_PATH" "$MKV_DIR/" && chmod +x "$MKV_DIR/$BIN_NAME"
         done
-        # Copy bundled Qt + support libs; patchelf rewires the rpath to $ORIGIN/lib.
-        LIB_SRC=$(find "$TMP_DIR/squashfs-root" -maxdepth 5 -name "libQt6Core.so*" -type f | head -1)
-        if [[ -n "$LIB_SRC" ]]; then
-            cp -r "$(dirname "$LIB_SRC")" "$MKV_DIR/lib"
-            if command -v patchelf &>/dev/null; then
-                for BIN in "$MKV_DIR"/mkv*; do
-                    patchelf --set-rpath '$ORIGIN/lib' "$BIN" 2>/dev/null || true
-                done
-            fi
-        fi
-
-        rm -rf "$TMP_DIR" "$TMP_IMG"
     fi
 
     echo "  OK"
