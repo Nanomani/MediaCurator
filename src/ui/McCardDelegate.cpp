@@ -230,23 +230,29 @@ QColor McCardDelegate::badgeColor(const QString& codecType)
 
 QColor McCardDelegate::statusColor(const QString& status)
 {
-	if (status == "proposed")  return { 0x88, 0x88, 0x88 };
-	if (status == "queued")    return { 0xc0, 0x80, 0x00 };
-	if (status == "running")   return { 0x10, 0x6a, 0xc0 };
-	if (status == "done")      return { 0x1a, 0x86, 0x4a };
-	if (status == "failed")    return { 0xcc, 0x22, 0x22 };
-	if (status == "cancelled") return { 0x88, 0x88, 0x88 };
+	if (status == "proposed")     return { 0x88, 0x88, 0x88 };
+	if (status == "queued")       return { 0xc0, 0x80, 0x00 };
+	if (status == "running")      return { 0x10, 0x6a, 0xc0 };
+	if (status == "done")         return { 0x1a, 0x86, 0x4a };
+	if (status == "failed")       return { 0xcc, 0x22, 0x22 };
+	if (status == "cancelled")    return { 0x88, 0x88, 0x88 };
+	if (status == "needs_review") return { 0xb8, 0x60, 0x00 };
+	if (status == "source")       return { 0x44, 0x72, 0x98 };
+	if (status == "output")       return { 0x1a, 0x86, 0x4a };
 	return { 0x60, 0x60, 0x60 };
 }
 
 QString McCardDelegate::statusLabel(const QString& status)
 {
-	if (status == "proposed")  return "Proposed";
-	if (status == "queued")    return "Queued";
-	if (status == "running")   return "Running\xE2\x80\xA6";
-	if (status == "done")      return "Done";
-	if (status == "failed")    return "Failed";
-	if (status == "cancelled") return "Cancelled";
+	if (status == "proposed")     return "Proposed";
+	if (status == "queued")       return "Queued";
+	if (status == "running")      return "Running\xE2\x80\xA6";
+	if (status == "done")         return "Done";
+	if (status == "failed")       return "Failed";
+	if (status == "cancelled")    return "Cancelled";
+	if (status == "needs_review") return "Review\xE2\x80\xA6";
+	if (status == "source")       return "Source File";
+	if (status == "output")       return "Remux File";
 	return status;
 }
 
@@ -965,7 +971,9 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 				pillText = QStringLiteral("Running %1%\xE2\x80\xA6").arg(d.progress);
 
 			qint64 displaySavedBytes = d.savedBytes;
-			const bool isPending = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued"));
+			const bool isPending = (d.status == QLatin1String("proposed")
+			                     || d.status == QLatin1String("queued")
+			                     || d.status == QLatin1String("source"));
 			if (isPending && displaySavedBytes == 0 && d.sizeBytes > 0)
 				displaySavedBytes = estimateSavingBytes(
 				    d.allStreams, d.removedIndices, d.sizeBytes, d.durationSec);

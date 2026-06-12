@@ -46,8 +46,9 @@ private:
 	QByteArray  m_readBuf;          // partial line accumulator — mkvmerge uses \r not \n
 	QString     m_log;
 	QString     m_descriptionText;
-	bool        m_writeLog = false;
-	QProcess*   m_process = nullptr;
+	bool        m_writeLog          = false;
+	bool        m_hasTrackMismatch  = false;
+	QProcess*   m_process           = nullptr;
 };
 
 } // namespace Mc

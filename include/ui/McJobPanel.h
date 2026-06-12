@@ -46,6 +46,9 @@ signals:
 	void editImdbLinkRequested(qint64 fileId);
 	void editImdbLinksRequested(const QList<qint64>& fileIds);  // batch: multiple selected
 	void refreshPosterRequested(qint64 fileId);
+#ifndef NDEBUG
+	void debugReviewRequested(qint64 jobId);
+#endif
 
 private slots:
 	void onQueueSelected();

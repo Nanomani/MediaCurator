@@ -57,11 +57,12 @@ constexpr int kPadH  = 6;
 
 static QColor pillColorForStatus(const QString& status)
 {
-	if (status == QLatin1String("proposed")) return { 0x88, 0x88, 0x88 };
-	if (status == QLatin1String("queued"))   return { 0xc0, 0x80, 0x00 };
-	if (status == QLatin1String("running"))  return { 0x10, 0x6a, 0xc0 };
-	if (status == QLatin1String("done"))     return { 0x1a, 0x86, 0x4a };
-	if (status == QLatin1String("failed"))   return { 0xcc, 0x22, 0x22 };
+	if (status == QLatin1String("proposed"))     return { 0x88, 0x88, 0x88 };
+	if (status == QLatin1String("queued"))       return { 0xc0, 0x80, 0x00 };
+	if (status == QLatin1String("running"))      return { 0x10, 0x6a, 0xc0 };
+	if (status == QLatin1String("done"))         return { 0x1a, 0x86, 0x4a };
+	if (status == QLatin1String("failed"))       return { 0xcc, 0x22, 0x22 };
+	if (status == QLatin1String("needs_review")) return { 0xb8, 0x60, 0x00 };
 	return { 0x50, 0x80, 0xa8 };
 }
 
@@ -783,6 +784,14 @@ void McJobPanel::setupUi()
 				});
 			});
 		}
+
+#ifndef NDEBUG
+		menu.addSeparator();
+		auto* dbgAct = menu.addAction(tr("[Debug] Simulate Track Mismatch…"));
+		connect(dbgAct, &QAction::triggered, this, [this, jobId] {
+			emit debugReviewRequested(jobId);
+		});
+#endif
 
 		menu.exec(m_listView->viewport()->mapToGlobal(pos));
 	});

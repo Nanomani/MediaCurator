@@ -913,8 +913,10 @@ bool DatabaseManager::requeueFailedJobs(const QList<qint64>& jobIds)
 bool DatabaseManager::recoverRunningJobs()
 {
 	QSqlQuery q(connection());
+	// Both 'running' and 'needs_review' mean the app was closed mid-job.
+	// The .tmp file (if any) is orphaned on disk — mark as failed so user can retry.
 	q.prepare("UPDATE jobs SET status='failed', finished_at=UNIXEPOCH(), result_code=-1 "
-	          "WHERE status='running'");
+	          "WHERE status IN ('running', 'needs_review')");
 	return q.exec();
 }
 

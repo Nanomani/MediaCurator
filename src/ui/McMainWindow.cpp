@@ -9,6 +9,7 @@
 #include "ui/McJobPanel.h"
 #include "ui/McLegendDialog.h"
 #include "ui/McPreviewDialog.h"
+#include "ui/McJobReviewDialog.h"
 #include "ui/McSettingsDialog.h"
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
@@ -326,6 +327,24 @@ McMainWindow::McMainWindow(QWidget* parent)
 		// Non-paused success: runNext() fires synchronously from onJobFinished,
 		// so either jobStarted (next job) or allFinished (queue empty) will
 		// update the status immediately after this handler returns.
+	});
+
+	connect(m_jobQueue, &JobQueue::reviewRequested, this,
+	        [this](qint64 jobId, const QString& filename, const QString& warningText,
+	               const QString& cmdArgs,
+	               const QList<StreamRecord>& srcStreams,
+	               const QList<StreamRecord>& outStreams) {
+		auto* dlg = new McJobReviewDialog(jobId, filename, warningText,
+		                                  cmdArgs, srcStreams, outStreams, this);
+		connect(dlg, &QDialog::finished, this, [this, jobId](int result) {
+			if (result == QDialog::Accepted)
+				m_jobQueue->commitReview(jobId);
+			else if (result == 2)
+				m_jobQueue->rejectReview(jobId, true);
+			else
+				m_jobQueue->rejectReview(jobId, false);
+		});
+		dlg->show();
 	});
 
 	connect(m_jobQueue, &JobQueue::allFinished, this, [this] {
@@ -884,6 +903,13 @@ void McMainWindow::setupUi()
 	        this, [](qint64 fileId) {
 		PosterManager::instance().refresh(fileId);
 	});
+
+#ifndef NDEBUG
+	connect(m_jobPanel, &McJobPanel::debugReviewRequested,
+	        this, [this](qint64 jobId) {
+		m_jobQueue->debugTriggerReview(jobId);
+	});
+#endif
 
 	splitter->setStretchFactor(0, 3);
 	splitter->setStretchFactor(1, 1);

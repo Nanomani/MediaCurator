@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QFile>
+#include <QRegularExpression>
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
@@ -128,10 +129,24 @@ void RemuxJob::onProcessFinished(int exitCode)
 		m_readBuf.clear();
 	}
 
+	// Detect the dangerous warning: a requested track ID was not found in the file.
+	// This can mean the track layout has shifted since the job was created, which
+	// risks removing the wrong tracks. We keep the .tmp and let the user review.
+	static const QRegularExpression mismatchRe(
+		R"(track with the ID \d+ was requested but not found)",
+		QRegularExpression::CaseInsensitiveOption);
+	m_hasTrackMismatch = mismatchRe.match(m_log).hasMatch();
+
 	qint64 savedBytes = 0;
 
 	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
 	if ((exitCode == 0 || exitCode == 1) && !m_outputPath.isEmpty() && !m_inputPath.isEmpty()) {
+		if (m_hasTrackMismatch) {
+			// Leave .tmp on disk — JobQueue will probe it and ask the user to verify
+			// before committing or discarding.
+			emit finished(exitCode, m_log, 0);
+			return;
+		}
 		const qint64 outputSize = QFileInfo(m_outputPath).size();
 
 		// Capture the original file's creation timestamp before we rename/delete it

@@ -27,6 +27,7 @@ set(MC_SOURCES
     ui/McJobListModel.cpp
     ui/McManageFoldersDialog.cpp
     ui/McPreviewDialog.cpp
+    ui/McJobReviewDialog.cpp
     ui/McBulkSummaryDialog.cpp
     ui/McWhatIfDialog.cpp
     ui/McJobStatsBar.cpp
@@ -95,6 +96,7 @@ set(MC_HEADERS
     ../include/ui/McJobListModel.h
     ../include/ui/McManageFoldersDialog.h
     ../include/ui/McPreviewDialog.h
+    ../include/ui/McJobReviewDialog.h
     ../include/ui/McBulkSummaryDialog.h
     ../include/ui/McWhatIfDialog.h
     ../include/ui/McJobStatsBar.h
