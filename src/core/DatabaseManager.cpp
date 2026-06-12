@@ -1017,6 +1017,31 @@ QList<JobRecord> DatabaseManager::allJobs() const
 	return result;
 }
 
+std::optional<JobRecord> DatabaseManager::jobById(qint64 jobId) const
+{
+	QSqlQuery q(connection());
+	q.prepare("SELECT * FROM jobs WHERE id = ?");
+	q.addBindValue(jobId);
+	if (!q.exec() || !q.next()) return std::nullopt;
+	JobRecord j;
+	j.id                  = q.value("id").toLongLong();
+	j.fileId              = q.value("file_id").toLongLong();
+	j.status              = q.value("status").toString();
+	j.jobType             = q.value("job_type").toString();
+	j.commandArgsJson     = q.value("command_args_json").toString();
+	j.summary             = q.value("summary").toString();
+	j.dryRun              = q.value("dry_run").toInt() != 0;
+	j.createdAt           = q.value("created_at").toLongLong();
+	j.startedAt           = q.value("started_at").toLongLong();
+	j.finishedAt          = q.value("finished_at").toLongLong();
+	j.resultCode          = q.value("result_code").toInt();
+	j.outputLog           = q.value("output_log").toString();
+	j.savedBytes          = q.value("saved_bytes").toLongLong();
+	j.descriptionText     = q.value("description_text").toString();
+	j.originalStreamsJson = q.value("original_streams_json").toString();
+	return j;
+}
+
 static void parseJobDisplayRecord(QSqlQuery& q, QList<Mc::JobDisplayRecord>& result)
 {
 	while (q.next()) {

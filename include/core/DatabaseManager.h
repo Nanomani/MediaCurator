@@ -176,6 +176,7 @@ public:
 	bool updateDisplayTitle(qint64 fileId, const QString& title, int year = 0);
 	bool setFileIgnored(qint64 fileId, bool ignored);
 	void deleteJobsForFile(qint64 fileId);
+	[[nodiscard]] std::optional<JobRecord> jobById(qint64 jobId) const;
 	QList<JobRecord> queuedJobs(JobSortMode sortMode = JobSortMode::SmallestFirst) const;
 	QList<JobRecord> allJobs() const;
 	QList<JobDisplayRecord> allJobsForPanel(JobSortMode sortMode = JobSortMode::SmallestFirst) const;

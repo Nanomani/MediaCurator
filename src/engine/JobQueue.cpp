@@ -126,7 +126,8 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 {
 	const qint64 jobId  = m_currentJobId;
 	const qint64 fileId = m_currentFileId;
-	const bool   ok     = (exitCode == 0);
+	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
+	const bool   ok     = (exitCode == 0 || exitCode == 1);
 
 	auto& db = DatabaseManager::instance();
 	db.updateJobStatus(jobId, ok ? "done" : "failed", exitCode, log);

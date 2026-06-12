@@ -13,6 +13,8 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
+#include <QDateTime>
 #include <QColor>
 #include <QComboBox>
 #include <QFrame>
@@ -705,6 +707,60 @@ void McJobPanel::setupUi()
 				QDesktopServices::openUrl(
 					QUrl::fromLocalFile(QFileInfo(fileOpt->path).absolutePath()));
 		});
+
+		// Show log for any job that has actually run
+		const bool hasLog = (status == QLatin1String("done")
+		                  || status == QLatin1String("failed")
+		                  || status == QLatin1String("cancelled"));
+		if (hasLog) {
+			auto* viewLogAct = menu.addAction(svgIcon(":/icons/visibility.svg"),
+			                                  tr("View &Log…"));
+			connect(viewLogAct, &QAction::triggered, this, [this, jobId] {
+				const auto rec = DatabaseManager::instance().jobById(jobId);
+				if (!rec) return;
+
+				auto* dlg = new QDialog(this);
+				dlg->setWindowTitle(tr("Job Log — %1").arg(rec->summary));
+				dlg->setAttribute(Qt::WA_DeleteOnClose);
+				dlg->resize(760, 480);
+
+				auto* vlay = new QVBoxLayout(dlg);
+
+				// Header info row
+				auto* infoLabel = new QLabel(dlg);
+				const auto fmtTime = [](qint64 ts) -> QString {
+					if (ts <= 0) return tr("—");
+					return QDateTime::fromSecsSinceEpoch(ts).toString(Qt::ISODate);
+				};
+				infoLabel->setText(tr("Status: <b>%1</b>  |  Exit code: <b>%2</b>  |  Started: %3  |  Finished: %4")
+					.arg(rec->status)
+					.arg(rec->resultCode)
+					.arg(fmtTime(rec->startedAt))
+					.arg(fmtTime(rec->finishedAt)));
+				infoLabel->setTextFormat(Qt::RichText);
+				vlay->addWidget(infoLabel);
+
+				auto* logEdit = new QPlainTextEdit(dlg);
+				logEdit->setReadOnly(true);
+				logEdit->setFont(QFont(QStringLiteral("Courier New"), 9));
+				logEdit->setWordWrapMode(QTextOption::NoWrap);
+				logEdit->setPlainText(rec->outputLog.isEmpty()
+					? tr("(no output captured)")
+					: rec->outputLog);
+				vlay->addWidget(logEdit);
+
+				auto* btnBox = new QDialogButtonBox(dlg);
+				auto* copyBtn = btnBox->addButton(tr("Copy to Clipboard"), QDialogButtonBox::ActionRole);
+				btnBox->addButton(QDialogButtonBox::Close);
+				connect(copyBtn, &QPushButton::clicked, this, [logEdit] {
+					QApplication::clipboard()->setText(logEdit->toPlainText());
+				});
+				connect(btnBox, &QDialogButtonBox::rejected, dlg, &QDialog::accept);
+				vlay->addWidget(btnBox);
+
+				dlg->show();
+			});
+		}
 
 		if (!selectedRemovableJobIds.isEmpty()) {
 			menu.addSeparator();
