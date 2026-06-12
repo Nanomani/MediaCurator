@@ -49,7 +49,7 @@ public slots:
 	// reanalyze=true  → delete stale job and rescan so user can re-analyze
 	// reanalyze=false → mark job failed, leave user to retry manually
 	void rejectReview(qint64 jobId, bool reanalyze);
-#ifndef NDEBUG
+#ifdef QT_DEBUG
 	// Test helper — opens the review dialog for any job using its current DB streams.
 	void debugTriggerReview(qint64 jobId);
 #endif

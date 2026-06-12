@@ -382,7 +382,7 @@ void JobQueue::rejectReview(qint64 jobId, bool reanalyze)
 		runNext();
 }
 
-#ifndef NDEBUG
+#ifdef QT_DEBUG
 void JobQueue::debugTriggerReview(qint64 jobId)
 {
 	auto& db = DatabaseManager::instance();
@@ -409,6 +409,6 @@ void JobQueue::debugTriggerReview(qint64 jobId)
 
 	emit reviewRequested(jobId, filename, warningText, cmdArgs, streams, fakeOutput);
 }
-#endif // NDEBUG
+#endif // QT_DEBUG
 
 } // namespace Mc

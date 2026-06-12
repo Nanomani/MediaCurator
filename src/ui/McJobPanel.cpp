@@ -785,7 +785,7 @@ void McJobPanel::setupUi()
 			});
 		}
 
-#ifndef NDEBUG
+#ifdef QT_DEBUG
 		menu.addSeparator();
 		auto* dbgAct = menu.addAction(tr("[Debug] Simulate Track Mismatch…"));
 		connect(dbgAct, &QAction::triggered, this, [this, jobId] {

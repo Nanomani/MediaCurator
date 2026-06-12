@@ -904,7 +904,7 @@ void McMainWindow::setupUi()
 		PosterManager::instance().refresh(fileId);
 	});
 
-#ifndef NDEBUG
+#ifdef QT_DEBUG
 	connect(m_jobPanel, &McJobPanel::debugReviewRequested,
 	        this, [this](qint64 jobId) {
 		m_jobQueue->debugTriggerReview(jobId);
