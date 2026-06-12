@@ -32,6 +32,7 @@ public:
 	// After analyzeSingleFile creates a proposed job, call this to switch the
 	// filter to Proposed, select the new row and scroll it into view.
 	void scrollToFileJob(qint64 fileId);
+	QList<qint64> visibleFileIds() const;
 
 public slots:
 	void onJobStatusChanged(qint64 jobId, const QString& status);

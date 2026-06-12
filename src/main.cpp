@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
+#include <QPixmapCache>
 #include <QProxyStyle>
 #include <QRandomGenerator>
 #include <QSplashScreen>
@@ -199,6 +200,7 @@ int main(int argc, char* argv[])
 {
 	QApplication app(argc, argv);
 	app.setStyle(new McAppStyle(QStyleFactory::create("Fusion")));
+	QPixmapCache::setCacheLimit(256 * 1024);  // 256 MB — scaled fanart/posters never evict
 
 	QPalette pal = app.palette();
 

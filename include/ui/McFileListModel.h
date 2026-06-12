@@ -2,9 +2,11 @@
 #include "core/DatabaseManager.h"
 #include <QAbstractListModel>
 #include <QHash>
+#include <QImage>
 #include <QList>
 #include <QSet>
 #include <QString>
+#include <QTimer>
 
 namespace Mc {
 
@@ -29,6 +31,7 @@ public:
 		ContainerTitleRole= Qt::UserRole + 9,   // QString — title from ffprobe format tags
 		FolderCountRole   = Qt::UserRole + 10,  // int — number of files sharing same parent folder
 		DisplayYearRole   = Qt::UserRole + 11,  // int — release year from TMDB (0 = unknown)
+		FanartRole        = Qt::UserRole + 12,  // QString — absolute path to w780 backdrop image
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -63,7 +66,8 @@ public:
 	void initMeta(const QHash<qint64, QString>& posterPaths,
 	              const QHash<qint64, QString>& imdbIds,
 	              const QSet<qint64>& filesWithJobs,
-	              const QHash<qint64, double>& ratings = {});
+	              const QHash<qint64, double>& ratings = {},
+	              const QHash<qint64, QString>& fanartPaths = {});
 	void applyFileUpdate(const Mc::FileRecord& file, const QList<Mc::StreamRecord>& streams);
 	void removeEntry(qint64 fileId);
 	void refreshJobFilter();        // re-query proposed jobs and reapply filter
@@ -84,6 +88,7 @@ public slots:
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
+	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void onImdbIdSaved(qint64 fileId, const QString& imdbId);
 	void onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating);
 	void toggleForcedRemoval(qint64 fileId, int streamIndex);
@@ -96,7 +101,10 @@ private:
 	QList<FileEntry>          m_allEntries;      // full unfiltered set
 	QList<FileEntry>          m_entries;         // visible (filtered) set
 	QSet<qint64>              m_filesWithJobs;
-	QHash<qint64, QString>    m_posterPaths;     // fileId → cached image path
+	QHash<qint64, QString>    m_posterPaths;     // fileId → cached poster image path
+	QHash<qint64, QString>    m_fanartPaths;     // fileId → cached fanart (backdrop) path
+	QHash<qint64, QString>    m_pendingFanartIds; // fileId → path, flushed by m_fanartBatchTimer
+	QTimer                    m_fanartBatchTimer;
 	QHash<qint64, int>        m_posterVersions;  // fileId → version counter (increments on update)
 	QHash<qint64, QString>    m_imdbIds;         // fileId → IMDb ID
 	QHash<qint64, double>     m_ratings;         // fileId → TMDB vote_average (absent = no rating)

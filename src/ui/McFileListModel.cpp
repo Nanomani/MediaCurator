@@ -1,15 +1,33 @@
 #include "ui/McFileListModel.h"
+#include "ui/McCardDelegate.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QPixmap>
+#include <QPixmapCache>
 #include <algorithm>
 
 namespace Mc {
 
 McFileListModel::McFileListModel(QObject* parent)
 	: QAbstractListModel(parent)
-{}
+{
+	m_fanartBatchTimer.setSingleShot(true);
+	m_fanartBatchTimer.setInterval(150);
+	connect(&m_fanartBatchTimer, &QTimer::timeout, this, [this]() {
+		for (auto it = m_pendingFanartIds.cbegin(); it != m_pendingFanartIds.cend(); ++it) {
+			const qint64 fileId = it.key();
+			for (int row = 0; row < m_entries.size(); ++row) {
+				if (m_entries.at(row).file.id != fileId) continue;
+				const QModelIndex idx = index(row);
+				emit dataChanged(idx, idx, {FanartRole});
+				break;
+			}
+		}
+		m_pendingFanartIds.clear();
+	});
+}
 
 // ── Filter helpers ────────────────────────────────────────────────────────────
 
@@ -173,6 +191,7 @@ void McFileListModel::reload()
 		m_allEntries.append({ f, streams.value(f.id) });
 
 	m_posterPaths = db.allDonePosterPaths();
+	m_fanartPaths = db.allDoneFanartPaths();
 	m_imdbIds     = db.allKnownImdbIds();
 	m_ratings     = db.allRatings();
 
@@ -197,12 +216,18 @@ void McFileListModel::recomputeFolderCounts()
 void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
                                const QHash<qint64, QString>& imdbIds,
                                const QSet<qint64>& filesWithJobs,
-                               const QHash<qint64, double>& ratings)
+                               const QHash<qint64, double>& ratings,
+                               const QHash<qint64, QString>& fanartPaths)
 {
 	m_posterPaths   = posterPaths;
 	m_imdbIds       = imdbIds;
 	m_filesWithJobs = filesWithJobs;
-	if (!ratings.isEmpty()) m_ratings = ratings;
+	if (!ratings.isEmpty())     m_ratings     = ratings;
+	if (!fanartPaths.isEmpty()) {
+		m_fanartPaths = fanartPaths;
+		if (!m_entries.isEmpty())
+			emit dataChanged(index(0), index(m_entries.size() - 1), {FanartRole});
+	}
 }
 
 void McFileListModel::refreshJobFilter()
@@ -309,6 +334,17 @@ void McFileListModel::onPosterReady(qint64 fileId, const QString& imagePath)
 		                            DisplayTitleRole, DisplayYearRole, RatingRole});
 		break;
 	}
+}
+
+void McFileListModel::onFanartReady(qint64 fileId, const QString& fanartPath,
+                                    const QImage& image)
+{
+	m_fanartPaths[fileId] = fanartPath;
+	if (!image.isNull())
+		McCardDelegate::prefetchFanart(fanartPath, QPixmap::fromImage(image));
+	m_pendingFanartIds[fileId] = fanartPath;
+	if (!m_fanartBatchTimer.isActive())
+		m_fanartBatchTimer.start();
 }
 
 void McFileListModel::onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating)
@@ -419,6 +455,7 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case FileRole:        return QVariant::fromValue(e.file);
 	case StreamsRole:     return QVariant::fromValue(e.streams);
 	case PosterRole:        return m_posterPaths.value(e.file.id);
+	case FanartRole:        return m_fanartPaths.value(e.file.id);
 	case PosterVersionRole: return m_posterVersions.value(e.file.id, 0);
 	case ImdbRole:          return m_imdbIds.value(e.file.id);
 	case RatingRole:        return m_ratings.value(e.file.id, 0.0);

@@ -1,4 +1,4 @@
-﻿#include "ui/McMainWindow.h"
+#include "ui/McMainWindow.h"
 #include "core/AppSettings.h"
 #include "ui/ImdbSearchDialog.h"
 #include "ui/McFilterPanel.h"
@@ -352,6 +352,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	pm.start(m_profile->tmdbApiKey());
 	connect(&pm, &PosterManager::posterReady,
 	        m_listModel, &McFileListModel::onPosterReady);
+	connect(&pm, &PosterManager::fanartReady,
+	        m_listModel, &McFileListModel::onFanartReady);
 	connect(&pm, &PosterManager::imdbIdSaved,
 	        m_listModel, &McFileListModel::onImdbIdSaved);
 	connect(&pm, &PosterManager::tmdbDataReady,
@@ -424,7 +426,9 @@ void McMainWindow::setupUi()
 		const FileRecord file     = idx.data(McFileListModel::FileRole).value<FileRecord>();
 		const QString    suggested = smartSuggestedTitle(file);
 		const QString    existing  = NfoParser::readImdbId(file.path);
-		ImdbSearchDialog dlg(file.path, suggested, existing, m_profile->tmdbApiKey(), this);
+		const QString    exPoster  = idx.data(McFileListModel::PosterRole).toString();
+		const QString    exFanart  = idx.data(McFileListModel::FanartRole).toString();
+		ImdbSearchDialog dlg(file.path, suggested, existing, m_profile->tmdbApiKey(), this, exPoster, exFanart);
 		dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 		if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
@@ -432,7 +436,8 @@ void McMainWindow::setupUi()
 			if (!id.isEmpty()) {
 				NfoParser::writeMovieNfo(file.path, id, dlg.selectedTitle(), dlg.selectedYear());
 				PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
-				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount());
+				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
+				                                 dlg.selectedFanartPath());
 				if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(file.id, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(file.id, dlg.selectedVoteAverage());
@@ -582,10 +587,15 @@ void McMainWindow::setupUi()
 				const FileRecord& f = imdbFiles[i];
 				const QString suggested = smartSuggestedTitle(f);
 				QString existing;
-				if (const auto pr = DatabaseManager::instance().posterForFile(f.id))
+				QString exPoster;
+				QString exFanart;
+				if (const auto pr = DatabaseManager::instance().posterForFile(f.id)) {
 					existing = pr->imdbId;
+					exPoster = pr->imagePath;
+					exFanart = pr->fanartPath;
+				}
 				if (existing.isEmpty()) existing = NfoParser::readImdbId(f.path);
-				ImdbSearchDialog dlg(f.path, suggested, existing, m_profile->tmdbApiKey(), this);
+				ImdbSearchDialog dlg(f.path, suggested, existing, m_profile->tmdbApiKey(), this, exPoster, exFanart);
 				dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 				if (existing.isEmpty()) dlg.setAutoSelectSingle(true);
 				if (total > 1) dlg.setBatchMode(i + 1, total);
@@ -596,7 +606,8 @@ void McMainWindow::setupUi()
 				if (imdbId.isEmpty()) continue;
 				NfoParser::writeMovieNfo(f.path, imdbId, dlg.selectedTitle(), dlg.selectedYear());
 				PosterManager::instance().refresh(f.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId,
-				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount());
+				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
+				                                 dlg.selectedFanartPath());
 				if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(f.id, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(f.id, dlg.selectedVoteAverage());
@@ -774,14 +785,19 @@ void McMainWindow::setupUi()
 		// Prefer DB-saved id so the dialog shows the correct existing link even
 		// when no .nfo file is present on disk.
 		QString existingId;
-		if (const auto pr = DatabaseManager::instance().posterForFile(fileId))
+		QString exPoster;
+		QString exFanart;
+		if (const auto pr = DatabaseManager::instance().posterForFile(fileId)) {
 			existingId = pr->imdbId;
+			exPoster   = pr->imagePath;
+			exFanart   = pr->fanartPath;
+		}
 		if (existingId.isEmpty())
 			existingId = NfoParser::readImdbId(fileOpt->path);
 		ImdbSearchDialog dlg(fileOpt->path,
 		                     smartSuggestedTitle(*fileOpt),
 		                     existingId,
-		                     m_profile->tmdbApiKey(), this);
+		                     m_profile->tmdbApiKey(), this, exPoster, exFanart);
 		dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 		if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 		if (dlg.exec() == QDialog::Accepted) {
@@ -790,7 +806,8 @@ void McMainWindow::setupUi()
 				NfoParser::writeMovieNfo(fileOpt->path, id,
 				                        dlg.selectedTitle(), dlg.selectedYear());
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
-				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount());
+				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
+				                                 dlg.selectedFanartPath());
 			if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
@@ -818,15 +835,20 @@ void McMainWindow::setupUi()
 			if (!fileOpt) continue;
 
 			QString existingId;
-			if (const auto pr = DatabaseManager::instance().posterForFile(fileId))
+			QString exPoster;
+			QString exFanart;
+			if (const auto pr = DatabaseManager::instance().posterForFile(fileId)) {
 				existingId = pr->imdbId;
+				exPoster   = pr->imagePath;
+				exFanart   = pr->fanartPath;
+			}
 			if (existingId.isEmpty())
 				existingId = NfoParser::readImdbId(fileOpt->path);
 
 			ImdbSearchDialog dlg(fileOpt->path,
 			                     smartSuggestedTitle(*fileOpt),
 			                     existingId,
-			                     m_profile->tmdbApiKey(), this);
+			                     m_profile->tmdbApiKey(), this, exPoster, exFanart);
 			dlg.setUnderstoodLanguages(m_profile->understoodLanguages());
 			if (existingId.isEmpty()) dlg.setAutoSelectSingle(true);
 			dlg.setBatchMode(i + 1, total);
@@ -840,7 +862,8 @@ void McMainWindow::setupUi()
 				NfoParser::writeMovieNfo(fileOpt->path, id,
 				                        dlg.selectedTitle(), dlg.selectedYear());
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
-				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount());
+				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
+				                                 dlg.selectedFanartPath());
 			if (dlg.selectedVoteAverage() > 0) {
 					m_listModel->setRatingForFile(fileId, dlg.selectedVoteAverage());
 					m_jobPanel->setRatingForFile(fileId, dlg.selectedVoteAverage());
@@ -1354,8 +1377,8 @@ void McMainWindow::startLibraryLoader()
 
 	// ── First page: library + queue (synchronous, splash still visible) ───────
 	// Keep this block as lean as possible — only the two paged queries.
+	const auto firstFiles = db.allFilesPaged(0, kFirstPageSize);
 	{
-		const auto firstFiles = db.allFilesPaged(0, kFirstPageSize);
 		if (!firstFiles.isEmpty()) {
 			QList<qint64> ids;
 			ids.reserve(firstFiles.size());
@@ -1365,6 +1388,18 @@ void McMainWindow::startLibraryLoader()
 				m_listModel->applyFileUpdate(f, streams.value(f.id));
 		}
 		m_jobPanel->refreshPaged(kFirstPageSize);   // uses batch streams — fast
+	}
+
+	// Promote visible first-page items to the front of the poster/fanart queue.
+	// Job queue first, then library — library ends up at the very front since each prepend wins.
+	// Reverse order within each list so item[0] lands at the absolute front.
+	{
+		auto& pm = PosterManager::instance();
+		const auto jobFileIds = m_jobPanel->visibleFileIds();
+		for (int i = static_cast<int>(jobFileIds.size()) - 1; i >= 0; --i)
+			pm.enqueue(jobFileIds.at(i));
+		for (int i = static_cast<int>(firstFiles.size()) - 1; i >= 0; --i)
+			pm.enqueue(firstFiles.at(i).id);
 	}
 
 	updateActionStates();
@@ -1414,8 +1449,9 @@ void McMainWindow::startLibraryLoader()
 	        [this](const QHash<qint64, QString>& posters,
 	               const QHash<qint64, QString>& imdbIds,
 	               const QSet<qint64>& filesWithJobs,
-	               const QHash<qint64, double>& ratings) {
-		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings);
+	               const QHash<qint64, double>& ratings,
+	               const QHash<qint64, QString>& fanartPaths) {
+		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings, fanartPaths);
 	});
 
 	connect(loader, &LibraryLoader::fileReady,

@@ -14,6 +14,7 @@
 #include <QHelpEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPixmap>
 #include <QPixmapCache>
 #include <QStyle>
 #include <QStyleOption>
@@ -23,8 +24,22 @@
 #include <QtMath>
 #include <algorithm>
 
-
 namespace Mc {
+
+// Raw fanart pixmaps (full-res, unscaled).  Never evicted — populated on download
+// so paint() never decodes a JPEG from disk during active downloads.
+static QHash<QString, QPixmap> s_fanartRawCache;
+
+// Version counter per path: incremented each time a new raw pixmap is stored so
+// that the derived scaled entries in QPixmapCache (keyed by path+version+width) are
+// automatically invalidated without needing a wildcard-remove API.
+static QHash<QString, int> s_fanartVersions;
+
+void McCardDelegate::prefetchFanart(const QString& path, QPixmap raw)
+{
+	s_fanartVersions[path]++;          // bump → old QPixmapCache entries become unreachable
+	s_fanartRawCache.insert(path, std::move(raw));
+}
 
 McCardDelegate::McCardDelegate(Mode mode, QObject* parent)
 	: QStyledItemDelegate(parent), m_mode(mode)
@@ -68,6 +83,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.containerTitle    = index.data(McFileListModel::ContainerTitleRole).toString();
 		d.folderCount       = index.data(McFileListModel::FolderCountRole).toInt();
 		d.originalLanguage  = file.originalLanguage;
+		d.fanartPath        = index.data(McFileListModel::FanartRole).toString();
 		d.allStreams         = index.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
 		d.removedIndices    = index.data(McFileListModel::OverridesRole).value<QSet<int>>();
 	} else {
@@ -84,6 +100,7 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.checked           = (index.data(Qt::CheckStateRole).toInt() == Qt::Checked);
 		d.toggleable        = (d.status == QLatin1String("proposed") || d.status == QLatin1String("queued") || d.status == QLatin1String("failed"));
 		d.originalLanguage  = index.data(McJobListModel::OriginalLanguageRole).toString();
+		d.fanartPath        = index.data(McJobListModel::FanartRole).toString();
 		d.allStreams         = index.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();
 		const auto kept    = index.data(McJobListModel::KeptStreamsRole).value<QList<StreamRecord>>();
 		QSet<int> keptIdx;
@@ -729,6 +746,44 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 	painter->fillRect(option.rect, bg);
 	painter->setPen(QPen(pal.color(QPalette::Mid), 1));
 	painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
+
+	// ── Fanart backdrop (dimmed background) ───────────────────────────────────
+	if (!d.fanartPath.isEmpty()) {
+		QPixmap fanart;
+		const QString fanartKey = QStringLiteral("fanart:%1:%2:%3")
+		                              .arg(d.fanartPath)
+		                              .arg(s_fanartVersions.value(d.fanartPath, 0))
+		                              .arg(option.rect.width());
+		if (!QPixmapCache::find(fanartKey, &fanart)) {
+			// Raw cache: populated by prefetchFanart() on download (never evicts).
+			// Falls back to disk only for pre-existing fanart on first access.
+			QPixmap raw = s_fanartRawCache.value(d.fanartPath);
+			if (raw.isNull()) {
+				raw = QPixmap(d.fanartPath);
+				if (!raw.isNull()) {
+					if (raw.height() > 300) {
+						const int y = (raw.height() - 300) / 2;
+						raw = raw.copy(0, y, raw.width(), 300);
+					}
+					s_fanartRawCache.insert(d.fanartPath, raw);
+				}
+			}
+			if (!raw.isNull()) {
+				fanart = raw.scaled(option.rect.size(), Qt::KeepAspectRatioByExpanding,
+				                    Qt::SmoothTransformation);
+				QPixmapCache::insert(fanartKey, fanart);
+			}
+		}
+		if (!fanart.isNull()) {
+			painter->save();
+			painter->setClipRect(option.rect);
+			painter->setOpacity(0.05);
+			const int ox = (fanart.width()  - option.rect.width())  / 2;
+			const int oy = (fanart.height() - option.rect.height()) / 2;
+			painter->drawPixmap(option.rect.left() - ox, option.rect.top() - oy, fanart);
+			painter->restore();
+		}
+	}
 
 	// ── Poster column ─────────────────────────────────────────────────────────
 	const QRect posterRect(option.rect.left(), option.rect.top(),

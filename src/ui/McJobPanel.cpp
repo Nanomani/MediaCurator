@@ -830,8 +830,8 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 
 	connect(&PosterManager::instance(), &PosterManager::posterReady,
 	        m_model, &McJobListModel::onPosterReady);
-	connect(&PosterManager::instance(), &PosterManager::posterReady,
-	        this, &McJobPanel::repaintCards);
+	connect(&PosterManager::instance(), &PosterManager::fanartReady,
+	        m_model, &McJobListModel::onFanartReady);
 	connect(&PosterManager::instance(), &PosterManager::imdbIdSaved,
 	        m_model, &McJobListModel::updateImdbId);
 }
@@ -848,6 +848,15 @@ void McJobPanel::refreshPaged(int limit)
 	m_model->reloadPaged(limit);
 	updateFooter();
 	emit jobsChanged(m_model->rowCount());
+}
+
+QList<qint64> McJobPanel::visibleFileIds() const
+{
+	QList<qint64> ids;
+	ids.reserve(m_model->rowCount());
+	for (int row = 0; row < m_model->rowCount(); ++row)
+		ids << m_model->index(row).data(McJobListModel::FileIdRole).toLongLong();
+	return ids;
 }
 
 void McJobPanel::scrollToFileJob(qint64 fileId)

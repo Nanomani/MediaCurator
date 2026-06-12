@@ -1,11 +1,14 @@
 #include "ui/McJobListModel.h"
 #include "ui/McFilterPanel.h"
+#include "ui/McCardDelegate.h"
 
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPixmap>
+#include <QPixmapCache>
 #include <QStringList>
 #include <algorithm>
 
@@ -13,7 +16,22 @@ namespace Mc {
 
 McJobListModel::McJobListModel(QObject* parent)
 	: QAbstractListModel(parent)
-{}
+{
+	m_fanartBatchTimer.setSingleShot(true);
+	m_fanartBatchTimer.setInterval(150);
+	connect(&m_fanartBatchTimer, &QTimer::timeout, this, [this]() {
+		for (auto it = m_pendingFanartIds.cbegin(); it != m_pendingFanartIds.cend(); ++it) {
+			const qint64 fileId = it.key();
+			for (int i = 0; i < m_entries.size(); ++i) {
+				if (m_entries[i].job.fileId == fileId) {
+					const QModelIndex idx = index(i);
+					emit dataChanged(idx, idx, {FanartRole});
+				}
+			}
+		}
+		m_pendingFanartIds.clear();
+	});
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -22,6 +40,7 @@ void McJobListModel::reload()
 	m_allEntries.clear();
 	m_allCheckStates.clear();
 	m_posterPaths = DatabaseManager::instance().allDonePosterPaths();
+	m_fanartPaths = DatabaseManager::instance().allDoneFanartPaths();
 
 	auto& db = DatabaseManager::instance();
 	const auto displayJobs = db.allJobsForPanel(m_sortMode);
@@ -84,6 +103,7 @@ void McJobListModel::reloadPaged(int limit)
 
 	auto& db = DatabaseManager::instance();
 	m_posterPaths = db.allDonePosterPaths();
+	m_fanartPaths = db.allDoneFanartPaths();
 	const auto displayJobs = db.allJobsForPanelPaged(limit, m_filterStatus, m_sortMode);
 
 	// allJobs() is fast (just metadata, no streams) — needed for commandArgs/origStreams
@@ -226,6 +246,17 @@ void McJobListModel::onPosterReady(qint64 fileId, const QString& imagePath)
 			emit dataChanged(idx, idx);
 		}
 	}
+}
+
+void McJobListModel::onFanartReady(qint64 fileId, const QString& fanartPath,
+                                   const QImage& image)
+{
+	m_fanartPaths.insert(fileId, fanartPath);
+	if (!image.isNull())
+		McCardDelegate::prefetchFanart(fanartPath, QPixmap::fromImage(image));
+	m_pendingFanartIds[fileId] = fanartPath;
+	if (!m_fanartBatchTimer.isActive())
+		m_fanartBatchTimer.start();
 }
 
 void McJobListModel::updateImdbId(qint64 fileId, const QString& imdbId)
@@ -419,6 +450,7 @@ QVariant McJobListModel::data(const QModelIndex& index, int role) const
 	case SummaryRole:       return e.job.summary;
 	case ProgressRole:      return m_progress.value(e.job.jobId, 0);
 	case PosterRole:        return m_posterPaths.value(e.job.fileId);
+	case FanartRole:        return m_fanartPaths.value(e.job.fileId);
 	case FileSizeRole:      return e.job.sizeBytes;
 	case FilePathRole:      return e.job.filePath;
 	case ImdbIdRole:        return e.job.imdbId;

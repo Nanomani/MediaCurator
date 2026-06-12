@@ -281,6 +281,7 @@ bool DatabaseManager::initSchema()
 		QSqlQuery m(connection());
 		m.exec("ALTER TABLE poster_cache ADD COLUMN vote_average REAL DEFAULT 0.0");
 		m.exec("ALTER TABLE poster_cache ADD COLUMN vote_count INTEGER DEFAULT 0");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN fanart_path TEXT DEFAULT ''");
 		// Ignore errors — column already exists
 	}
 
@@ -1149,12 +1150,13 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
-		INSERT INTO poster_cache(file_id, source, status, image_path, imdb_id, fetched_at, vote_average, vote_count)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, fetched_at, vote_average, vote_count)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id) DO UPDATE SET
 			source=excluded.source,
 			status=excluded.status,
 			image_path=excluded.image_path,
+			fanart_path=CASE WHEN excluded.fanart_path != '' THEN excluded.fanart_path ELSE fanart_path END,
 			imdb_id=excluded.imdb_id,
 			fetched_at=excluded.fetched_at,
 			vote_average=CASE WHEN excluded.vote_average > 0 THEN excluded.vote_average ELSE vote_average END,
@@ -1166,6 +1168,7 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 	q.addBindValue(nn(rec.source));
 	q.addBindValue(nn(rec.status));
 	q.addBindValue(nn(rec.imagePath));
+	q.addBindValue(nn(rec.fanartPath));
 	q.addBindValue(nn(rec.imdbId));
 	q.addBindValue(rec.fetchedAt);
 	q.addBindValue(rec.voteAverage);
@@ -1177,7 +1180,7 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT source,status,image_path,imdb_id,fetched_at,vote_average,vote_count FROM poster_cache WHERE file_id=?");
+	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count FROM poster_cache WHERE file_id=?");
 	q.addBindValue(fileId);
 	if (!q.exec() || !q.next()) return {};
 	PosterRecord r;
@@ -1185,10 +1188,11 @@ std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 	r.source      = q.value(0).toString();
 	r.status      = q.value(1).toString();
 	r.imagePath   = q.value(2).toString();
-	r.imdbId      = q.value(3).toString();
-	r.fetchedAt   = q.value(4).toLongLong();
-	r.voteAverage = q.value(5).toDouble();
-	r.voteCount   = q.value(6).toInt();
+	r.fanartPath  = q.value(3).toString();
+	r.imdbId      = q.value(4).toString();
+	r.fetchedAt   = q.value(5).toLongLong();
+	r.voteAverage = q.value(6).toDouble();
+	r.voteCount   = q.value(7).toInt();
 	return r;
 }
 
@@ -1204,13 +1208,15 @@ QList<qint64> DatabaseManager::fileIdsNeedingPosters() const
 		           pc.vote_average = 0
 		        OR f.display_title = ''
 		        OR f.display_title IS NULL
+		        OR pc.fanart_path = ''
+		        OR pc.fanart_path IS NULL
 		   ))
 		   OR (pc.status = 'no_poster' AND (
 		           f.display_title = ''
 		        OR f.display_title IS NULL
 		        OR (pc.imdb_id != '' AND pc.vote_average = 0)
 		   ))
-		ORDER BY f.id
+		ORDER BY f.filename COLLATE NOCASE
 	)");
 	QList<qint64> ids;
 	while (q.next()) ids << q.value(0).toLongLong();
@@ -1246,6 +1252,22 @@ void DatabaseManager::updateImdbId(qint64 fileId, const QString& imdbId)
 		qWarning() << "updateImdbId failed:" << q.lastError().text();
 }
 
+void DatabaseManager::clearPosterPath(const QString& imagePath)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE poster_cache SET status='pending', image_path='' WHERE image_path=?");
+	q.addBindValue(imagePath);
+	q.exec();
+}
+
+void DatabaseManager::clearFanartPath(const QString& fanartPath)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE poster_cache SET fanart_path='' WHERE fanart_path=?");
+	q.addBindValue(fanartPath);
+	q.exec();
+}
+
 void DatabaseManager::resetNoPosterRecords()
 {
 	QSqlQuery q(connection());
@@ -1256,6 +1278,16 @@ QHash<qint64, QString> DatabaseManager::allDonePosterPaths() const
 {
 	QSqlQuery q(connection());
 	q.exec("SELECT file_id, image_path FROM poster_cache WHERE status='done' AND image_path != ''");
+	QHash<qint64, QString> result;
+	while (q.next())
+		result.insert(q.value(0).toLongLong(), q.value(1).toString());
+	return result;
+}
+
+QHash<qint64, QString> DatabaseManager::allDoneFanartPaths() const
+{
+	QSqlQuery q(connection());
+	q.exec("SELECT file_id, fanart_path FROM poster_cache WHERE fanart_path != ''");
 	QHash<qint64, QString> result;
 	while (q.next())
 		result.insert(q.value(0).toLongLong(), q.value(1).toString());

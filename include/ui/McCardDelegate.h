@@ -75,6 +75,10 @@ public:
 	static constexpr int kFlagH    = 12; // flag icon height inside a badge
 	static constexpr int kFlagGap  = 4;  // gap between flag icon and badge text
 
+	// Pre-populate the raw fanart cache from a freshly-downloaded QPixmap.
+	// Called from model slots after a new fanart arrives so paint() never hits disk.
+	static void prefetchFanart(const QString& path, QPixmap raw);
+
 public slots:
 	void invalidateSizeCacheFor(qint64 fileId);
 	void clearSizeCache();
@@ -100,6 +104,7 @@ private:
 		QString             containerTitle;         // ffprobe format tags title (Library only)
 		int                 folderCount    = 1;     // files sharing the same parent folder (Library only)
 		QString             originalLanguage;       // ISO 639-2 original audio language (both modes)
+		QString             fanartPath;             // w780 backdrop; empty if not yet fetched
 		QList<StreamRecord> allStreams;
 		QSet<int>           removedIndices; // stream indices shown struck-through
 		// job queue only

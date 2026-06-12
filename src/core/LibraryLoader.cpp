@@ -18,7 +18,8 @@ void LibraryLoader::run()
 	emit metaReady(db.allDonePosterPaths(),
 	               db.allKnownImdbIds(),
 	               db.proposedJobFileIds(),
-	               db.allRatings());
+	               db.allRatings(),
+	               db.allDoneFanartPaths());
 
 	int offset    = m_startOffset;
 	int pageIndex = 0;

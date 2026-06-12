@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <QByteArray>
+#include <QImage>
 #include <QObject>
 #include <QString>
 
@@ -45,10 +46,12 @@ public:
 	// imageData:  raw image bytes already downloaded — written directly to cache, no network call.
 	void refresh(qint64 fileId, const QString& posterPath = {},
 	             const QByteArray& imageData = {}, const QString& imdbId = {},
-	             double voteAverage = 0.0, int voteCount = 0);
+	             double voteAverage = 0.0, int voteCount = 0,
+	             const QString& fanartTmdbPath = {});
 
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
+	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
 	// Fired when TMDB metadata (title, year, rating) has been fetched and written
 	// to the DB.  The UI should update cards without waiting for an app restart.
 	void tmdbDataReady(qint64 fileId, QString title, int year, double rating);

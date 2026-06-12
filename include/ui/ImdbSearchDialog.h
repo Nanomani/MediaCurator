@@ -29,7 +29,9 @@ public:
 	                  const QString& suggestedTitle,
 	                  const QString& existingImdbId,
 	                  const QString& tmdbApiKey,
-	                  QWidget* parent = nullptr);
+	                  QWidget* parent = nullptr,
+	                  const QString& existingPosterPath = {},
+	                  const QString& existingFanartPath = {});
 	~ImdbSearchDialog() override;
 
 	QString    selectedImdbId()           const;
@@ -37,6 +39,7 @@ public:
 	int        selectedYear()             const;
 	QString    selectedPosterPath()       const;
 	QByteArray selectedImageData()        const;
+	QString    selectedFanartPath()       const;  // TMDB backdrop path; empty if none selected
 	QString    selectedOriginalLanguage() const;  // ISO 639-1 from TMDB; empty if not available
 	double     selectedVoteAverage()      const;
 	int        selectedVoteCount()        const;
@@ -64,14 +67,11 @@ protected:
 	bool eventFilter(QObject* obj, QEvent* ev) override;
 
 private:
-	void setStatusText(const QString& text, bool isError = false);
-
 	QString m_videoPath;
 	QString m_tmdbApiKey;
 
 	QLineEdit*        m_searchEdit   = nullptr;
 	QPushButton*      m_btnSearch    = nullptr;
-	QLabel*           m_statusLabel  = nullptr;
 	QListWidget*      m_resultsList  = nullptr;
 	QLineEdit*        m_imdbIdEdit   = nullptr;
 	QPushButton*      m_btnSave      = nullptr;
@@ -81,14 +81,18 @@ private:
 	QNetworkReply*              m_searchReply  = nullptr;
 	QNetworkReply*              m_extIdsReply  = nullptr;
 	QHash<int, QNetworkReply*>  m_thumbReplyByRow;
+	QHash<int, QNetworkReply*>  m_backdropReplyByRow;
 	QHash<int, QNetworkReply*>  m_prefetchByRow;
 	QHash<int, QString>         m_imdbIdByRow;
 
 	// Poster gallery
 	QSplitter*    m_splitter         = nullptr;
+	QSplitter*    m_gallerySplitter  = nullptr;
 	QComboBox*    m_langFilter       = nullptr;
 	QListWidget*  m_posterGallery    = nullptr;
-	QLabel*       m_galleryStatus    = nullptr;
+
+	// Fanart gallery
+	QListWidget*  m_fanartGallery    = nullptr;
 
 	QNetworkReply*                 m_imagesReply = nullptr;
 	QHash<QNetworkReply*, QString> m_galleryThumbReplies;
@@ -97,18 +101,28 @@ private:
 	QByteArray                     m_galleryImageData;
 	QString                        m_galleryFilter;
 
+	QHash<QNetworkReply*, QString> m_fanartThumbReplies;
+	QHash<QString, QByteArray>     m_fanartThumbData;
+	QList<QJsonObject>             m_allBackdrops;
+	QString                        m_selectedFanartPath;
+
 	void fetchPosterImages(int tmdbId, const QString& origLang);
 	void populateGallery();
+	void populateFanartGallery();
 
 	QStringList            m_understoodLanguages;
 	QString                m_selectedTitle;
 	QString                m_selectedPosterPath;
 	QHash<int, QByteArray> m_thumbDataByRow;
-	int     m_selectedYear      = 0;
-	bool    m_acceptAfterFetch  = false;
-	bool    m_autoSelectSingle  = false;
-	bool    m_batchMode         = false;
-	bool    m_userHasSearched   = false;
+	QString                m_existingPosterPath;
+	QString                m_existingFanartPath;
+	int     m_selectedYear        = 0;
+	bool    m_acceptAfterFetch    = false;
+	bool    m_autoSelectSingle    = false;
+	bool    m_batchMode           = false;
+	bool    m_userHasSearched     = false;
+	bool    m_userSelectedPoster  = false;
+	bool    m_userSelectedFanart  = false;
 };
 
 } // namespace Mc

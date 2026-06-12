@@ -1,10 +1,13 @@
-﻿#include "ui/ImdbSearchDialog.h"
+#include "ui/ImdbSearchDialog.h"
 #include "core/AppSettings.h"
 #include "ui/McLanguageFlags.h"
 
+#include <QApplication>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFile>
 #include <QFileInfo>
+#include <QScreen>
 #include <QSet>
 #include <QSettings>
 #include <QString>
@@ -42,6 +45,7 @@ public:
 	static constexpr int kBtnW    = 24;
 	static constexpr int kGap     = 8;
 	static constexpr int kRatingW = 76;   // reserved width for the IMDb rating badge
+	static constexpr int kPosterW = 58;   // poster column at left edge (~2:3 at 87px height)
 
 	QPoint hoverPos{-1, -1};  // updated by the dialog's eventFilter
 
@@ -57,43 +61,102 @@ public:
 		return QString::number(n);
 	}
 
+	static void drawBackdrop(QPainter* p, const QStyleOptionViewItem& option,
+	                         const QModelIndex& index)
+	{
+		const QPixmap raw = index.data(Qt::UserRole + 9).value<QPixmap>();
+		if (raw.isNull()) return;
+		const QString cacheKey = QStringLiteral("dlg_bd:%1:%2")
+		    .arg(index.data(Qt::UserRole + 8).toString()).arg(option.rect.width());
+		QPixmap scaled;
+		if (!QPixmapCache::find(cacheKey, &scaled)) {
+			scaled = raw.scaled(option.rect.size(), Qt::KeepAspectRatioByExpanding,
+			                    Qt::SmoothTransformation);
+			QPixmapCache::insert(cacheKey, scaled);
+		}
+		const int ox = (scaled.width()  - option.rect.width())  / 2;
+		const int oy = (scaled.height() - option.rect.height()) / 2;
+		p->save();
+		p->setClipRect(option.rect);
+		p->setOpacity(0.05);
+		p->drawPixmap(option.rect.left() - ox, option.rect.top() - oy, scaled);
+		p->restore();
+	}
+
+	QSize sizeHint(const QStyleOptionViewItem& option,
+	               const QModelIndex& index) const override
+	{
+		QSize sh = QStyledItemDelegate::sizeHint(option, index);
+		sh.setHeight(qMax(sh.height(), kPosterW * 3 / 2 + 4));  // poster 2:3 + padding
+		return sh;
+	}
+
 	void paint(QPainter* p, const QStyleOptionViewItem& option,
 	           const QModelIndex& index) const override
 	{
-		const QString id = index.data(Qt::UserRole + 4).toString();
-		if (id.isEmpty()) {
-			QStyleOptionViewItem opt = option;
-			opt.state &= ~QStyle::State_HasFocus;
-			QStyledItemDelegate::paint(p, opt, index);
-			return;
-		}
-
-		// Narrow text area to leave room for rating badge + IMDb button.
-		QStyleOptionViewItem opt = option;
-		opt.state &= ~QStyle::State_HasFocus;
-		opt.rect.setRight(option.rect.right() - kRatingW - kBtnW - kGap * 2);
-		QStyledItemDelegate::paint(p, opt, index);
-
-		// Fill the right two columns with the same background so they blend.
 		const bool sel    = option.state & QStyle::State_Selected;
 		const bool active = option.state & QStyle::State_Active;
 		const QPalette::ColorGroup grp = active ? QPalette::Active : QPalette::Inactive;
+		const QString id = index.data(Qt::UserRole + 4).toString();
+
+		// ── Background (full row) ──
 		const QColor bg = sel
 			? option.palette.color(grp, QPalette::Highlight)
 			: (index.row() % 2 == 0
 			   ? option.palette.color(grp, QPalette::Base)
 			   : option.palette.color(grp, QPalette::AlternateBase));
-		p->fillRect(QRect(opt.rect.right() + 1, option.rect.top(),
-		                  option.rect.right() - opt.rect.right(), option.rect.height()), bg);
+		p->fillRect(option.rect, bg);
+
+		// ── Fanart backdrop ──
+		drawBackdrop(p, option, index);
+
+		// ── Poster (left edge, full height) ──
+		{
+			const QRect posterRect(option.rect.left(), option.rect.top(),
+			                       kPosterW, option.rect.height());
+			const QIcon icon = index.data(Qt::DecorationRole).value<QIcon>();
+			if (!icon.isNull()) {
+				const QPixmap pm = icon.pixmap(
+				    icon.actualSize({kPosterW * 4, option.rect.height() * 4}));
+				if (!pm.isNull()) {
+					const QPixmap scaled = pm.scaled(posterRect.size(),
+					    Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+					p->save();
+					p->setClipRect(posterRect);
+					const int ox = (scaled.width()  - posterRect.width())  / 2;
+					const int oy = (scaled.height() - posterRect.height()) / 2;
+					p->drawPixmap(posterRect.left() - ox, posterRect.top() - oy, scaled);
+					p->restore();
+				} else {
+					p->fillRect(posterRect, option.palette.color(grp, QPalette::Mid).darker(110));
+				}
+			} else {
+				p->fillRect(posterRect, option.palette.color(grp, QPalette::Mid).darker(110));
+			}
+		}
+
+		// ── Title text ──
+		const int rightReserved = id.isEmpty() ? 0 : kRatingW + kBtnW + kGap * 2;
+		const QRect textRect = option.rect.adjusted(kPosterW + 8, 0, -rightReserved, 0);
+		const QColor textColor = sel
+			? option.palette.color(grp, QPalette::HighlightedText)
+			: option.palette.color(grp, QPalette::Text);
+		p->save();
+		p->setPen(textColor);
+		p->setFont(option.font);
+		p->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+		            index.data(Qt::DisplayRole).toString());
+		p->restore();
+
+		if (id.isEmpty()) return;
 
 		// ── IMDb-style rating badge ───────────────────────────────────────────
 		const double voteAvg   = index.data(Qt::UserRole + 6).toDouble();
 		const int    voteCount = index.data(Qt::UserRole + 7).toInt();
 		if (voteAvg > 0.0) {
-			const QRect ratingRect(opt.rect.right() + kGap, option.rect.top(),
+			const QRect ratingRect(textRect.right() + kGap, option.rect.top(),
 			                       kRatingW - kGap, option.rect.height());
 
-			// Star — centered vertically, left-aligned in rating rect
 			QFont starFont = option.font;
 			starFont.setPointSizeF(option.font.pointSizeF() * 1.5);
 			starFont.setBold(true);
@@ -103,12 +166,11 @@ public:
 			const int starTop  = midY - starH / 2 - (voteCount > 0 ? 4 : 0);
 			p->save();
 			p->setFont(starFont);
-			p->setPen(QColor(0xF5, 0xC5, 0x18));  // IMDb yellow
+			p->setPen(QColor(0xF5, 0xC5, 0x18));
 			p->drawText(QRect(ratingRect.left(), starTop, starW + 2, starH),
 			            Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("\xe2\x98\x85"));
 			p->restore();
 
-			// "X.X/10" — next to the star
 			const int numX = ratingRect.left() + starW + 4;
 			QFont numFont = option.font;
 			numFont.setBold(true);
@@ -120,10 +182,8 @@ public:
 			const int tenW   = QFontMetrics(tenFont).horizontalAdvance(QStringLiteral("/10"));
 
 			p->save();
-			const QColor textColor = sel ? option.palette.color(grp, QPalette::HighlightedText)
-			                             : option.palette.color(grp, QPalette::Text);
-			const QColor dimColor  = sel ? textColor.darker(140)
-			                             : option.palette.color(grp, QPalette::PlaceholderText);
+			const QColor dimColor = sel ? textColor.darker(140)
+			                            : option.palette.color(grp, QPalette::PlaceholderText);
 			p->setFont(numFont);
 			p->setPen(textColor);
 			p->drawText(QRect(numX, starTop, scoreW, QFontMetrics(numFont).height()),
@@ -135,7 +195,6 @@ public:
 			            Qt::AlignLeft | Qt::AlignBottom, QStringLiteral("/10"));
 			p->restore();
 
-			// Vote count below
 			if (voteCount > 0) {
 				const QString votes = formatVotes(voteCount);
 				QFont cntFont = option.font;
@@ -174,6 +233,36 @@ public:
 	}
 };
 
+// QComboBox subclass that always opens its popup above the widget.
+class UpComboBox : public QComboBox {
+public:
+	using QComboBox::QComboBox;
+	void showPopup() override {
+		QComboBox::showPopup();
+		QWidget* popup = view() ? view()->parentWidget() : nullptr;
+		if (popup && popup->isVisible())
+			popup->move(mapToGlobal(QPoint(0, -popup->height())));
+	}
+};
+
+// QListWidget with no viewport top margin (setViewportMargins is protected).
+class NoMarginListWidget : public QListWidget {
+public:
+	explicit NoMarginListWidget(QWidget* parent = nullptr) : QListWidget(parent) {
+		setViewportMargins(0, 0, 0, 0);
+	}
+protected:
+	void showEvent(QShowEvent* e) override {
+		QListWidget::showEvent(e);
+		setViewportMargins(0, 0, 0, 0);
+	}
+	void changeEvent(QEvent* e) override {
+		QListWidget::changeEvent(e);
+		if (e->type() == QEvent::StyleChange || e->type() == QEvent::FontChange)
+			setViewportMargins(0, 0, 0, 0);
+	}
+};
+
 } // anonymous namespace
 
 namespace Mc {
@@ -182,10 +271,14 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 									const QString& suggestedTitle,
 									const QString& existingImdbId,
 									const QString& tmdbApiKey,
-									QWidget* parent)
+									QWidget* parent,
+									const QString& existingPosterPath,
+									const QString& existingFanartPath)
 	: QDialog(parent, Qt::Dialog)
 	, m_videoPath(videoPath)
 	, m_tmdbApiKey(tmdbApiKey)
+	, m_existingPosterPath(existingPosterPath)
+	, m_existingFanartPath(existingFanartPath)
 	, m_nam([] { static QNetworkAccessManager* s = new QNetworkAccessManager; return s; }())
 {
 	const QString fname = QFileInfo(videoPath).fileName();
@@ -218,16 +311,13 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	searchRow->addWidget(m_btnSearch);
 	mainLayout->addLayout(searchRow);
 
-	m_statusLabel = new QLabel(this);
-	m_statusLabel->setVisible(false);
-	mainLayout->addWidget(m_statusLabel);
-
 	// Results list
 	m_resultsList = new QListWidget(this);
 	m_resultsList->setSelectionMode(QAbstractItemView::SingleSelection);
 	m_resultsList->setAlternatingRowColors(true);
 	m_resultsList->setIconSize({54, 80});
-	m_resultsList->setSpacing(2);
+	m_resultsList->setSpacing(0);
+	m_resultsList->setFrameShape(QFrame::NoFrame);
 	m_resultsList->setStyleSheet("QListView { outline: 0; } QListView::item { outline: none; }");
 	m_resultsList->setItemDelegate(new ImdbResultDelegate(m_resultsList));
 	m_resultsList->viewport()->setMouseTracking(true);
@@ -238,23 +328,26 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	auto* galleryPanel  = new QWidget(this);
 	auto* galleryLayout = new QVBoxLayout(galleryPanel);
 	galleryLayout->setContentsMargins(0, 0, 0, 0);
-	galleryLayout->setSpacing(4);
+	galleryLayout->setSpacing(6);
 
-	m_langFilter = new QComboBox(galleryPanel);
+	m_langFilter = new UpComboBox(galleryPanel);
 	m_langFilter->addItem(tr("All"), QString{});
-	m_langFilter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-
-	m_galleryStatus = new QLabel(tr("Select a result to browse posters."), galleryPanel);
-	m_galleryStatus->setStyleSheet("color: gray;");
-	m_galleryStatus->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	m_langFilter->setFixedWidth(140);
+	m_langFilter->setIconSize({20, 14});
 
 	auto* filterRow = new QHBoxLayout;
 	filterRow->addWidget(new QLabel(tr("Language:"), galleryPanel));
-	filterRow->addWidget(m_langFilter, 1);
-	filterRow->addWidget(m_galleryStatus);
-	galleryLayout->addLayout(filterRow);
+	filterRow->addWidget(m_langFilter);
+	filterRow->addStretch();
 
-	m_posterGallery = new QListWidget(galleryPanel);
+	m_gallerySplitter = new QSplitter(Qt::Horizontal, galleryPanel);
+
+	auto* posterSide  = new QWidget(galleryPanel);
+	auto* posterSideL = new QVBoxLayout(posterSide);
+	posterSideL->setContentsMargins(0, 0, 0, 0);
+	posterSideL->setSpacing(0);
+
+	m_posterGallery = new NoMarginListWidget(posterSide);
 	m_posterGallery->setViewMode(QListView::IconMode);
 	m_posterGallery->setIconSize({90, 135});
 	m_posterGallery->setGridSize({100, 158});
@@ -262,13 +355,70 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	m_posterGallery->setMovement(QListView::Static);
 	m_posterGallery->setUniformItemSizes(true);
 	m_posterGallery->setWordWrap(false);
-	galleryLayout->addWidget(m_posterGallery, 1);
+	m_posterGallery->setSpacing(0);
+	m_posterGallery->setFrameShape(QFrame::NoFrame);
+	posterSideL->addWidget(m_posterGallery, 1);
+
+	auto* fanartSide  = new QWidget(galleryPanel);
+	auto* fanartSideL = new QVBoxLayout(fanartSide);
+	fanartSideL->setContentsMargins(0, 0, 0, 0);
+	fanartSideL->setSpacing(0);
+
+	m_fanartGallery = new NoMarginListWidget(fanartSide);
+	m_fanartGallery->setViewMode(QListView::IconMode);
+	m_fanartGallery->setIconSize({150, 84});
+	m_fanartGallery->setGridSize({158, 88});
+	m_fanartGallery->setResizeMode(QListView::Adjust);
+	m_fanartGallery->setMovement(QListView::Static);
+	m_fanartGallery->setUniformItemSizes(true);
+	m_fanartGallery->setWordWrap(false);
+	m_fanartGallery->setSpacing(0);
+	m_fanartGallery->setFrameShape(QFrame::NoFrame);
+	fanartSideL->addWidget(m_fanartGallery, 1);
+
+
+	m_gallerySplitter->addWidget(posterSide);
+	m_gallerySplitter->addWidget(fanartSide);
+	m_gallerySplitter->setStretchFactor(0, 1);
+	m_gallerySplitter->setStretchFactor(1, 1);
+	m_gallerySplitter->setContentsMargins(0, 0, 0, 0);
+	{
+		QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
+		const QByteArray gst = s.value("imdbSearchDialog/gallerySplitter").toByteArray();
+		if (!gst.isEmpty())
+			m_gallerySplitter->restoreState(gst);
+		else
+			m_gallerySplitter->setSizes({3 * 100 + 10, 2 * 158 + 10});
+	}
+	galleryLayout->addWidget(m_gallerySplitter, 1);
+	galleryLayout->addLayout(filterRow);
+
+	// Left side: results list + IMDb ID row beneath it
+	auto* leftSide = new QWidget(this);
+	auto* leftLayout = new QVBoxLayout(leftSide);
+	leftLayout->setContentsMargins(0, 0, 0, 0);
+	leftLayout->setSpacing(6);
+	leftLayout->addWidget(m_resultsList, 1);
+	{
+		auto* idRow = new QHBoxLayout;
+		idRow->setContentsMargins(0, 0, 0, 0);
+		idRow->addWidget(new QLabel(tr("IMDb ID:"), leftSide));
+		m_imdbIdEdit = new QLineEdit(leftSide);
+		m_imdbIdEdit->setPlaceholderText("tt0000000");
+		m_imdbIdEdit->setFixedWidth(140);
+		if (!existingImdbId.isEmpty())
+			m_imdbIdEdit->setText(existingImdbId);
+		idRow->addWidget(m_imdbIdEdit);
+		idRow->addStretch();
+		leftLayout->addLayout(idRow);
+	}
 
 	auto* splitter = new QSplitter(Qt::Horizontal, this);
-	splitter->addWidget(m_resultsList);
+	splitter->addWidget(leftSide);
 	splitter->addWidget(galleryPanel);
 	splitter->setStretchFactor(0, 3);
 	splitter->setStretchFactor(1, 2);
+	splitter->setContentsMargins(0, 0, 0, 0);
 
 	{
 		QSettings s(Mc::AppSettings::geometryFilePath(), QSettings::IniFormat);
@@ -282,6 +432,7 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	connect(m_posterGallery, &QListWidget::currentItemChanged,
 	        this, [this](QListWidgetItem* item) {
 		if (!item) return;
+		m_userSelectedPoster = true;
 		m_selectedPosterPath = item->data(Qt::UserRole).toString();
 		m_galleryImageData   = m_galleryThumbData.value(m_selectedPosterPath);
 		if (!m_galleryImageData.isEmpty()) {
@@ -295,22 +446,26 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 			}
 		}
 	});
+	connect(m_fanartGallery, &QListWidget::currentItemChanged,
+	        this, [this](QListWidgetItem* item) {
+		m_selectedFanartPath = item ? item->data(Qt::UserRole).toString() : QString{};
+		if (!item) return;  // gallery clearing — leave the search-result backdrop intact
+		m_userSelectedFanart = true;
+		const int row = m_resultsList->currentRow();
+		if (row < 0 || row >= m_resultsList->count()) return;
+		// Update UserRole+8 (scale-cache key) so drawBackdrop doesn't serve the old scaled image.
+		// UserRole+9 carries the raw pixmap; both must change together.
+		QPixmap px;
+		const QByteArray bytes = m_fanartThumbData.value(m_selectedFanartPath);
+		if (!bytes.isEmpty()) px.loadFromData(bytes);
+		m_resultsList->item(row)->setData(Qt::UserRole + 8, m_selectedFanartPath);
+		m_resultsList->item(row)->setData(Qt::UserRole + 9, QVariant::fromValue(px));
+		m_resultsList->viewport()->update();
+	});
 	connect(m_langFilter, &QComboBox::currentIndexChanged, this, [this]() {
 		m_galleryFilter = m_langFilter->currentData().toString();
 		populateGallery();
 	});
-
-	// IMDb ID row
-	auto* idRow = new QHBoxLayout;
-	idRow->addWidget(new QLabel(tr("IMDb ID:"), this));
-	m_imdbIdEdit = new QLineEdit(this);
-	m_imdbIdEdit->setPlaceholderText("tt0000000");
-	m_imdbIdEdit->setFixedWidth(140);
-	if (!existingImdbId.isEmpty())
-		m_imdbIdEdit->setText(existingImdbId);
-	idRow->addWidget(m_imdbIdEdit);
-	idRow->addStretch();
-	mainLayout->addLayout(idRow);
 
 	// Dialog buttons
 	m_btnBox = new QDialogButtonBox(this);
@@ -324,7 +479,6 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	if (tmdbApiKey.isEmpty()) {
 		m_searchEdit->setEnabled(false);
 		m_btnSearch->setEnabled(false);
-		setStatusText(tr("Configure a TMDB API key in Settings to enable search."), true);
 	}
 
 	connect(m_btnSearch,  &QPushButton::clicked, this, [this]() {
@@ -371,8 +525,13 @@ ImdbSearchDialog::~ImdbSearchDialog()
 	for (auto it = m_galleryThumbReplies.begin(); it != m_galleryThumbReplies.end(); ++it)
 		it.key()->disconnect(this);
 	m_galleryThumbReplies.clear();
+	for (auto it = m_fanartThumbReplies.begin(); it != m_fanartThumbReplies.end(); ++it)
+		it.key()->disconnect(this);
+	m_fanartThumbReplies.clear();
 	for (QNetworkReply* r : std::as_const(m_thumbReplyByRow)) r->disconnect(this);
 	m_thumbReplyByRow.clear();
+	for (QNetworkReply* r : std::as_const(m_backdropReplyByRow)) r->disconnect(this);
+	m_backdropReplyByRow.clear();
 	for (QNetworkReply* r : std::as_const(m_prefetchByRow)) r->disconnect(this);
 	m_prefetchByRow.clear();
 	// m_nam is a shared static — never destroyed.
@@ -384,6 +543,8 @@ void ImdbSearchDialog::done(int result)
 	s.setValue("imdbSearchDialog/geometry", saveGeometry());
 	if (m_splitter)
 		s.setValue("imdbSearchDialog/splitter", m_splitter->saveState());
+	if (m_gallerySplitter)
+		s.setValue("imdbSearchDialog/gallerySplitter", m_gallerySplitter->saveState());
 	s.setValue("imdbSearchDialog/galleryFilter", m_galleryFilter);
 	QDialog::done(result);
 }
@@ -418,10 +579,27 @@ QString    ImdbSearchDialog::selectedImdbId()     const { return m_imdbIdEdit->t
 QString    ImdbSearchDialog::selectedTitle()      const { return m_selectedTitle; }
 int        ImdbSearchDialog::selectedYear()       const { return m_selectedYear; }
 QString    ImdbSearchDialog::selectedPosterPath() const { return m_selectedPosterPath; }
+QString    ImdbSearchDialog::selectedFanartPath() const
+{
+	// Only return a path if the user explicitly picked a backdrop; otherwise the
+	// caller should leave the existing fanart intact (worker checks before overwriting).
+	return m_userSelectedFanart ? m_selectedFanartPath : QString{};
+}
 QByteArray ImdbSearchDialog::selectedImageData()  const
 {
 	if (!m_galleryImageData.isEmpty()) return m_galleryImageData;
 	if (!m_resultsList) return {};
+	// If user explicitly picked from gallery, use the TMDB thumbnail
+	if (m_userSelectedPoster) return m_thumbDataByRow.value(m_resultsList->currentRow());
+	// No explicit selection: prefer the existing library poster (preserves quality and avoids
+	// overwriting a higher-resolution image with the w92 TMDB thumbnail)
+	if (!m_existingPosterPath.isEmpty()) {
+		QFile f(m_existingPosterPath);
+		if (f.open(QIODevice::ReadOnly)) {
+			const QByteArray bytes = f.readAll();
+			if (!bytes.isEmpty()) return bytes;
+		}
+	}
 	return m_thumbDataByRow.value(m_resultsList->currentRow());
 }
 QString ImdbSearchDialog::selectedOriginalLanguage() const
@@ -445,12 +623,6 @@ int ImdbSearchDialog::selectedVoteCount() const
 	return item ? item->data(Qt::UserRole + 7).toInt() : 0;
 }
 
-void ImdbSearchDialog::setStatusText(const QString& text, bool isError)
-{
-	m_statusLabel->setText(text);
-	m_statusLabel->setStyleSheet(isError ? "color: #c0392b;" : "color: gray;");
-	m_statusLabel->setVisible(!text.isEmpty());
-}
 
 void ImdbSearchDialog::onSearch()
 {
@@ -464,12 +636,13 @@ void ImdbSearchDialog::onSearch()
 	for (QNetworkReply* r : m_thumbReplyByRow) r->abort();
 	m_thumbReplyByRow.clear();
 	m_thumbDataByRow.clear();
+	for (QNetworkReply* r : m_backdropReplyByRow) r->abort();
+	m_backdropReplyByRow.clear();
 	for (QNetworkReply* r : m_prefetchByRow) r->abort();
 	m_prefetchByRow.clear();
 	m_imdbIdByRow.clear();
 
 	m_resultsList->clear();
-	setStatusText(tr("Searching…"));
 	m_btnSearch->setEnabled(false);
 
 	// Split title and year — TMDB's year param improves precision
@@ -507,8 +680,7 @@ void ImdbSearchDialog::onSearch()
 
 		if (reply->error() != QNetworkReply::NoError) {
 			if (reply->error() != QNetworkReply::OperationCanceledError)
-				setStatusText(tr("Network error: %1").arg(reply->errorString()), true);
-			if (m_autoSelectSingle) { setWindowOpacity(1.0); raise(); activateWindow(); }
+				if (m_autoSelectSingle) { setWindowOpacity(1.0); raise(); activateWindow(); }
 			reply->deleteLater();
 			return;
 		}
@@ -518,7 +690,6 @@ void ImdbSearchDialog::onSearch()
 		reply->deleteLater();
 
 		if (results.isEmpty()) {
-			setStatusText(tr("No results found."));
 			return;
 		}
 
@@ -527,7 +698,8 @@ void ImdbSearchDialog::onSearch()
 			const QString     title       = obj["title"].toString();
 			const int         year        = obj["release_date"].toString().left(4).toInt();
 			const int         tmdbId      = obj["id"].toInt();
-			const QString     posterPath  = obj["poster_path"].toString();
+			const QString     posterPath   = obj["poster_path"].toString();
+			const QString     backdropPath = obj["backdrop_path"].toString();
 			const QString     origLang    = obj["original_language"].toString();
 			const double      voteAvg     = obj["vote_average"].toDouble();
 			const int         voteCount   = obj["vote_count"].toInt();
@@ -544,8 +716,9 @@ void ImdbSearchDialog::onSearch()
 			item->setData(Qt::UserRole + 5, origLang);
 			item->setData(Qt::UserRole + 6, voteAvg);
 			item->setData(Qt::UserRole + 7, voteCount);
+			item->setData(Qt::UserRole + 8, backdropPath);
 
-			// Fetch thumbnail asynchronously
+			// Fetch poster thumbnail asynchronously
 			if (!posterPath.isEmpty()) {
 				const QUrl thumbUrl(
 					QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(posterPath));
@@ -562,9 +735,40 @@ void ImdbSearchDialog::onSearch()
 						QPixmap px;
 						if (px.loadFromData(bytes) && row < m_resultsList->count()) {
 							m_thumbDataByRow[row] = bytes;
-							m_resultsList->item(row)->setIcon(
-								QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
-								                Qt::SmoothTransformation)));
+							// Don't overwrite the pre-loaded existing poster icon in the
+							// single-result case — the gallery selection lambda handles updates.
+							if (m_resultsList->count() > 1 || m_existingPosterPath.isEmpty()) {
+								m_resultsList->item(row)->setIcon(
+									QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
+									                Qt::SmoothTransformation)));
+							}
+						}
+					}
+					r->deleteLater();
+				});
+			}
+
+			// Fetch backdrop thumbnail asynchronously (w300 is enough for a 10% opacity tint)
+			if (!backdropPath.isEmpty()) {
+				const QUrl bdUrl(
+					QStringLiteral("https://image.tmdb.org/t/p/w300%1").arg(backdropPath));
+				QNetworkRequest bdReq(bdUrl);
+				bdReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+				QNetworkReply* r = m_nam->get(bdReq);
+				const int row = m_resultsList->count() - 1;
+				m_backdropReplyByRow[row] = r;
+				connect(r, &QNetworkReply::finished, r, &QObject::deleteLater);
+				connect(r, &QNetworkReply::finished, this, [this, r, row]() {
+					m_backdropReplyByRow.remove(row);
+					if (r->error() == QNetworkReply::NoError) {
+						QPixmap px;
+						if (px.loadFromData(r->readAll()) && row < m_resultsList->count()) {
+							// Don't overwrite the pre-loaded existing fanart backdrop in the
+							// single-result case — the gallery selection lambda handles updates.
+							if (m_resultsList->count() > 1 || m_existingFanartPath.isEmpty()) {
+								m_resultsList->item(row)->setData(Qt::UserRole + 9,
+								                                  QVariant::fromValue(px));
+							}
 						}
 					}
 					r->deleteLater();
@@ -572,7 +776,6 @@ void ImdbSearchDialog::onSearch()
 			}
 		}
 
-		setStatusText(tr("%1 result(s)").arg(results.size()));
 
 		// Prefetch IMDb IDs for all results in parallel
 		for (int row = 0; row < m_resultsList->count(); ++row) {
@@ -630,6 +833,33 @@ void ImdbSearchDialog::onSearch()
 				}
 			}
 			m_resultsList->setCurrentRow(bestRow);
+
+			// When there is exactly one result, pre-populate the mini card with the
+			// current library poster/backdrop so the user sees what they already have
+			// before any TMDB thumbnail arrives (Issue 7).
+			if (m_resultsList->count() == 1
+			    && (!m_existingPosterPath.isEmpty() || !m_existingFanartPath.isEmpty())) {
+				auto* firstItem = m_resultsList->item(0);
+				if (firstItem) {
+					if (!m_existingPosterPath.isEmpty()) {
+						QPixmap px(m_existingPosterPath);
+						if (!px.isNull())
+							firstItem->setIcon(QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
+							                                   Qt::SmoothTransformation)));
+					}
+					if (!m_existingFanartPath.isEmpty()) {
+						QPixmap px(m_existingFanartPath);
+						if (!px.isNull()) {
+							if (px.height() > 300) {
+								const int y = (px.height() - 300) / 2;
+								px = px.copy(0, y, px.width(), 300);
+							}
+							firstItem->setData(Qt::UserRole + 8, m_existingFanartPath);
+							firstItem->setData(Qt::UserRole + 9, QVariant::fromValue(px));
+						}
+					}
+				}
+			}
 
 			if (m_autoSelectSingle && m_resultsList->count() == 1) {
 				// Exactly one result — auto-accept once the IMDb ID arrives.
@@ -728,6 +958,8 @@ void ImdbSearchDialog::onResultSelectionChanged()
 	const QListWidgetItem* item = m_resultsList->currentItem();
 	if (!item) return;
 
+	m_userSelectedPoster = false;
+	m_userSelectedFanart = false;
 	m_selectedTitle      = item->data(Qt::UserRole + 1).toString();
 	m_selectedYear       = item->data(Qt::UserRole + 2).toInt();
 	m_selectedPosterPath = item->data(Qt::UserRole + 3).toString();
@@ -797,12 +1029,17 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang)
 	m_galleryThumbData.clear();
 	m_allPosters.clear();
 	m_posterGallery->clear();
+	for (auto it = m_fanartThumbReplies.begin(); it != m_fanartThumbReplies.end(); ++it)
+		it.key()->disconnect(this);
+	m_fanartThumbReplies.clear();
+	m_fanartThumbData.clear();
+	m_allBackdrops.clear();
+	m_fanartGallery->clear();
+	m_selectedFanartPath.clear();
 	m_langFilter->blockSignals(true);
 	m_langFilter->clear();
 	m_langFilter->addItem(tr("All"), QString{});
 	m_langFilter->blockSignals(false);
-	m_galleryFilter.clear();
-	m_galleryStatus->setText(tr("Loading posters\xe2\x80\xa6"));
 
 	QStringList langs = {QStringLiteral("en"), QStringLiteral("null")};
 	if (!origLang.isEmpty() && origLang != QLatin1String("en"))
@@ -830,17 +1067,22 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang)
 
 		if (reply->error() != QNetworkReply::NoError) {
 			if (reply->error() != QNetworkReply::OperationCanceledError)
-				m_galleryStatus->setText(tr("Failed to load posters."));
-			return;
+				return;
 		}
 
-		const QJsonArray posters =
-			QJsonDocument::fromJson(reply->readAll()).object()[QStringLiteral("posters")].toArray();
+		const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
+		const QJsonArray posters   = root[QStringLiteral("posters")].toArray();
+		const QJsonArray backdrops = root[QStringLiteral("backdrops")].toArray();
 
 		m_allPosters.clear();
 		m_allPosters.reserve(posters.size());
 		for (const auto& v : posters)
 			m_allPosters.append(v.toObject());
+
+		m_allBackdrops.clear();
+		m_allBackdrops.reserve(backdrops.size());
+		for (const auto& v : backdrops)
+			m_allBackdrops.append(v.toObject());
 
 		// Rebuild language filter from what the response actually contains
 		QSet<QString> langs;
@@ -851,14 +1093,22 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang)
 
 		m_langFilter->blockSignals(true);
 		m_langFilter->clear();
-		m_langFilter->addItem(tr("All"), QString{});
+		const qreal    dpr    = m_langFilter->devicePixelRatioF();
+		const QSize    iconSz = m_langFilter->iconSize();
+		QPixmap placeholder(QSize(qRound(iconSz.width() * dpr), qRound(iconSz.height() * dpr)));
+		placeholder.fill(Qt::transparent);
+		placeholder.setDevicePixelRatio(dpr);
+		const QIcon noIcon(placeholder);
+		m_langFilter->addItem(noIcon, tr("All"), QString{});
 		if (langs.contains(QStringLiteral("null")))
-			m_langFilter->addItem(tr("Textless"), QStringLiteral("null"));
+			m_langFilter->addItem(noIcon, tr("Textless"), QStringLiteral("null"));
 		QStringList sorted(langs.begin(), langs.end());
 		sorted.sort();
 		for (const QString& l : std::as_const(sorted)) {
-			if (l != QLatin1String("null") && !l.isEmpty())
-				m_langFilter->addItem(l.toUpper(), l);
+			if (l != QLatin1String("null") && !l.isEmpty()) {
+				const QPixmap flagPx = McLanguageFlags::flag(l, iconSz.height(), dpr);
+				m_langFilter->addItem(flagPx.isNull() ? noIcon : QIcon(flagPx), l.toUpper(), l);
+			}
 		}
 		m_langFilter->blockSignals(false);
 		// Restore previous filter if the new result also has it; otherwise "All"
@@ -873,11 +1123,72 @@ void ImdbSearchDialog::fetchPosterImages(int tmdbId, const QString& origLang)
 		}
 
 		populateGallery();
+		populateFanartGallery();
 	});
+}
+
+void ImdbSearchDialog::populateFanartGallery()
+{
+	m_fanartGallery->clear();
+
+	for (const auto& b : std::as_const(m_allBackdrops)) {
+		const QString path    = b[QStringLiteral("file_path")].toString();
+		const double  voteAvg = b[QStringLiteral("vote_average")].toDouble();
+
+		auto* item = new QListWidgetItem(m_fanartGallery);
+		item->setData(Qt::UserRole, path);
+		item->setSizeHint({158, 88});
+		item->setToolTip(QStringLiteral("\xe2\x98\x85 %1").arg(voteAvg, 0, 'f', 1));
+
+		if (m_fanartThumbData.contains(path)) {
+			QPixmap px;
+			if (px.loadFromData(m_fanartThumbData[path]))
+				item->setIcon(QIcon(px.scaled(150, 84, Qt::KeepAspectRatio,
+				                              Qt::SmoothTransformation)));
+		} else {
+			const QUrl thumbUrl(QStringLiteral("https://image.tmdb.org/t/p/w300%1").arg(path));
+			QNetworkRequest thumbReq(thumbUrl);
+			thumbReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+			QNetworkReply* r = m_nam->get(thumbReq);
+			m_fanartThumbReplies[r] = path;
+			connect(r, &QNetworkReply::finished, r, &QObject::deleteLater);
+			connect(r, &QNetworkReply::finished, this, [this, r, path]() {
+				m_fanartThumbReplies.remove(r);
+				if (r->error() != QNetworkReply::NoError) return;
+				const QByteArray bytes = r->readAll();
+				m_fanartThumbData[path] = bytes;
+				QPixmap px;
+				if (!px.loadFromData(bytes)) return;
+				const QIcon icon(px.scaled(150, 84, Qt::KeepAspectRatio,
+				                           Qt::SmoothTransformation));
+				for (int i = 0; i < m_fanartGallery->count(); ++i) {
+					if (m_fanartGallery->item(i)->data(Qt::UserRole).toString() == path) {
+						m_fanartGallery->item(i)->setIcon(icon);
+						break;
+					}
+				}
+				// If this thumb belongs to the currently selected backdrop, push it to the mini card now.
+				if (path == m_selectedFanartPath) {
+					const int row = m_resultsList->currentRow();
+					if (row >= 0 && row < m_resultsList->count()) {
+						m_resultsList->item(row)->setData(Qt::UserRole + 8, path);
+						m_resultsList->item(row)->setData(Qt::UserRole + 9, QVariant::fromValue(px));
+						m_resultsList->viewport()->update();
+					}
+				}
+			});
+		}
+	}
+
 }
 
 void ImdbSearchDialog::populateGallery()
 {
+	// In "All" mode, show language labels — keep full-height grid cells.
+	// In filtered mode, there's nothing useful to label, so shrink cells to recover space.
+	const bool showLabels = m_galleryFilter.isEmpty();
+	m_posterGallery->blockSignals(true);
+	m_posterGallery->setGridSize(showLabels ? QSize(100, 158) : QSize(100, 140));
 	m_posterGallery->clear();
 
 	for (const auto& p : std::as_const(m_allPosters)) {
@@ -889,13 +1200,13 @@ void ImdbSearchDialog::populateGallery()
 
 		const QString path      = p[QStringLiteral("file_path")].toString();
 		const double  voteAvg   = p[QStringLiteral("vote_average")].toDouble();
-		const QString langLabel = m_galleryFilter.isEmpty()
+		const QString langLabel = showLabels
 			? (lang == QLatin1String("null") ? tr("Textless") : lang.toUpper())
 			: QString{};
 
 		auto* item = new QListWidgetItem(langLabel, m_posterGallery);
 		item->setData(Qt::UserRole, path);
-		item->setSizeHint({100, 158});
+		item->setSizeHint(showLabels ? QSize(100, 158) : QSize(100, 140));
 		item->setToolTip(QStringLiteral("%1  \xe2\x98\x85 %2").arg(langLabel).arg(voteAvg, 0, 'f', 1));
 
 		if (m_galleryThumbData.contains(path)) {
@@ -923,7 +1234,7 @@ void ImdbSearchDialog::populateGallery()
 					if (m_posterGallery->item(i)->data(Qt::UserRole).toString() == path) {
 						m_posterGallery->item(i)->setIcon(icon);
 						auto* cur = m_posterGallery->currentItem();
-						if (cur && cur->data(Qt::UserRole).toString() == path) {
+						if (m_userSelectedPoster && cur && cur->data(Qt::UserRole).toString() == path) {
 							m_galleryImageData = bytes;
 							const int row = m_resultsList->currentRow();
 							if (row >= 0 && row < m_resultsList->count())
@@ -937,13 +1248,8 @@ void ImdbSearchDialog::populateGallery()
 			});
 		}
 	}
+	m_posterGallery->blockSignals(false);
 
-	const int count = m_posterGallery->count();
-	m_galleryStatus->setText(count > 0
-		? tr("%1 poster(s)").arg(count)
-		: (m_allPosters.isEmpty()
-		   ? tr("No posters available.")
-		   : tr("No posters match this filter.")));
 }
 
 } // namespace Mc

@@ -2,8 +2,10 @@
 #include "core/DatabaseManager.h"
 #include <QAbstractListModel>
 #include <QHash>
+#include <QImage>
 #include <QList>
 #include <QString>
+#include <QTimer>
 
 namespace Mc {
 
@@ -34,6 +36,7 @@ public:
 		DurationRole   = Qt::UserRole + 14,  // double duration in seconds
 		RatingRole            = Qt::UserRole + 15,  // double TMDB vote_average, 0 if unknown
 		OriginalLanguageRole  = Qt::UserRole + 16,  // QString ISO 639-2 original audio language
+		FanartRole            = Qt::UserRole + 17,  // QString absolute path to w780 backdrop image
 	};
 
 	explicit McJobListModel(QObject* parent = nullptr);
@@ -78,6 +81,7 @@ public slots:
 	void setRatingForFile(qint64 fileId, double rating);
 	void updateProgress(qint64 jobId, int percent);
 	void onPosterReady(qint64 fileId, const QString& imagePath);
+	void onFanartReady(qint64 fileId, const QString& fanartPath, const QImage& image);
 	void updateImdbId(qint64 fileId, const QString& imdbId);
 
 private:
@@ -93,7 +97,10 @@ private:
 	QList<JobCardEntry>    m_entries;
 	QList<Qt::CheckState>  m_checkStates;
 	QHash<qint64, int>     m_progress;       // jobId → 0-100
-	QHash<qint64, QString> m_posterPaths;    // fileId → local image path
+	QHash<qint64, QString> m_posterPaths;    // fileId → local poster image path
+	QHash<qint64, QString> m_fanartPaths;    // fileId → local fanart (backdrop) path
+	QHash<qint64, QString> m_pendingFanartIds; // fileId → path, flushed by m_fanartBatchTimer
+	QTimer                 m_fanartBatchTimer;
 	QString                m_filterText;
 	QString                m_filterStatus;
 	quint32                m_quickFilters = 0;

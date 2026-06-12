@@ -87,6 +87,7 @@ struct PosterRecord {
 	QString source;         // "embedded" | "tmdb" | ""
 	QString status;         // "pending" | "done" | "no_poster" | "failed"
 	QString imagePath;
+	QString fanartPath;     // absolute path to w780 backdrop; empty if not yet fetched
 	QString imdbId;
 	qint64  fetchedAt   = 0;
 	double  voteAverage = 0.0;
@@ -189,9 +190,12 @@ public:
 	std::optional<PosterRecord> posterForFile(qint64 fileId) const;
 	QList<qint64>               fileIdsNeedingPosters() const;
 	QHash<qint64, QString>      allDonePosterPaths() const;
+	QHash<qint64, QString>      allDoneFanartPaths() const;
 	QHash<qint64, QString>      allKnownImdbIds() const;
 	QHash<qint64, double>       allRatings() const;
 	void                        resetPosterForFile(qint64 fileId);
+	void                        clearPosterPath(const QString& imagePath);
+	void                        clearFanartPath(const QString& fanartPath);
 	void                        updateImdbId(qint64 fileId, const QString& imdbId);
 	void                        resetNoPosterRecords();
 

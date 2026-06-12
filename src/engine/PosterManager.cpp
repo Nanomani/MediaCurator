@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
+#include <QImage>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -34,8 +35,10 @@ public:
 	    , m_tmdbApiKey(tmdbApiKey)
 	{
 		const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-		m_cacheDir = dataDir + "/posters";
+		m_cacheDir  = dataDir + "/posters";
+		m_fanartDir = dataDir + "/fanart";
 		QDir().mkpath(m_cacheDir);
+		QDir().mkpath(m_fanartDir);
 	}
 
 public slots:
@@ -48,8 +51,35 @@ public slots:
 		connect(m_timer, &QTimer::timeout, this, &PosterWorker::processNext);
 
 		if (!m_tmdbApiKey.isEmpty()) {
+			resetMissingMediaInDb();
 			loadPending();
 			if (!m_queue.isEmpty()) m_timer->start();
+		}
+	}
+
+	// For every DB row that records an image_path or fanart_path, verify the file exists.
+	// If not, reset the record so fileIdsNeedingPosters() re-queues the file for download.
+	void resetMissingMediaInDb()
+	{
+		{
+			const QHash<qint64, QString> paths = DatabaseManager::instance().allDonePosterPaths();
+			QSet<QString> checked;
+			for (const QString& path : paths) {
+				if (path.isEmpty() || checked.contains(path)) continue;
+				checked.insert(path);
+				if (!QFile::exists(path))
+					DatabaseManager::instance().clearPosterPath(path);
+			}
+		}
+		{
+			const QHash<qint64, QString> paths = DatabaseManager::instance().allDoneFanartPaths();
+			QSet<QString> checked;
+			for (const QString& path : paths) {
+				if (path.isEmpty() || checked.contains(path)) continue;
+				checked.insert(path);
+				if (!QFile::exists(path))
+					DatabaseManager::instance().clearFanartPath(path);
+			}
 		}
 	}
 
@@ -57,6 +87,10 @@ public slots:
 	{
 		m_stopping = true;
 		if (m_timer) m_timer->stop();
+		if (m_currentReply) {
+			m_currentReply->abort();
+			m_currentReply = nullptr;
+		}
 	}
 
 	void setTmdbApiKey(const QString& key) { m_tmdbApiKey = key; }
@@ -68,7 +102,8 @@ public slots:
 			// Triggered when the TMDB key is set for the first time — load every
 			// file that is still pending or was previously marked "no_poster".
 			loadPending();
-		} else if (fileId > 0 && !m_queue.contains(fileId)) {
+		} else if (fileId > 0) {
+			m_queue.removeOne(fileId);
 			m_queue.prepend(fileId);
 		}
 		if (m_timer && !m_timer->isActive() && !m_queue.isEmpty())
@@ -77,6 +112,7 @@ public slots:
 
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
+	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
 	void tmdbDataReady(qint64 fileId, QString title, int year, double rating);
 
 private slots:
@@ -150,7 +186,9 @@ private:
 			const bool needsRating = existing->voteAverage <= 0.0;
 			const bool needsTitle  = fileOpt->displayTitle.isEmpty();
 			const bool needsNfo    = !QFile::exists(NfoParser::nfoPathFor(filePath));
-			if (!needsRating && !needsTitle && !needsNfo) return;
+			const bool needsFanart = existing->fanartPath.isEmpty()
+			                         || !QFile::exists(existing->fanartPath);
+			if (!needsRating && !needsTitle && !needsNfo && !needsFanart) return;
 			if (imdbId.isEmpty() || m_tmdbApiKey.isEmpty()) return;
 			const TmdbInfo info = fetchTmdbInfo(imdbId);
 			if (needsRating && info.voteAverage > 0.0) {
@@ -158,6 +196,31 @@ private:
 				pr.voteAverage = info.voteAverage;
 				pr.voteCount   = info.voteCount;
 				DatabaseManager::instance().upsertPosterRecord(pr);
+			}
+			if (needsFanart) {
+				const QString outPath = m_fanartDir + "/" + imdbId + ".jpg";
+				QByteArray fanartBytes;
+				const bool diskHit   = QFile::exists(outPath);
+				const bool dlOk      = !diskHit && !info.backdropPath.isEmpty()
+				    && downloadImage(
+				           QStringLiteral("https://image.tmdb.org/t/p/w1280%1").arg(info.backdropPath),
+				           outPath, &fanartBytes);
+				if (diskHit || dlOk) {
+					PosterRecord pr = existing ? *existing : PosterRecord{};
+					pr.fileId     = fileId;
+					pr.fanartPath = outPath;
+					DatabaseManager::instance().upsertPosterRecord(pr);
+					QImage img;
+					if (dlOk && !fanartBytes.isEmpty())
+						img.loadFromData(fanartBytes);
+					else
+						img = QImage(outPath);
+					if (!img.isNull() && img.height() > 300) {
+						const int y = (img.height() - 300) / 2;
+						img = img.copy(0, y, img.width(), 300);
+					}
+					emit fanartReady(fileId, outPath, img);
+				}
 			}
 			applyTmdbInfo(info, imdbId);
 			return;
@@ -231,6 +294,28 @@ private:
 			        outPath))
 				imagePath = outPath;
 		}
+		if (!imdbId.isEmpty()) {
+			const QString outPath = m_fanartDir + "/" + imdbId + ".jpg";
+			QByteArray fanartBytes;
+			const bool diskHit = QFile::exists(outPath);
+			const bool dlOk    = !diskHit && !info.backdropPath.isEmpty()
+			    && downloadImage(
+			           QStringLiteral("https://image.tmdb.org/t/p/w1280%1").arg(info.backdropPath),
+			           outPath, &fanartBytes);
+			if (diskHit || dlOk) {
+				rec.fanartPath = outPath;
+				QImage img;
+				if (dlOk && !fanartBytes.isEmpty())
+					img.loadFromData(fanartBytes);
+				else
+					img = QImage(outPath);
+				if (!img.isNull() && img.height() > 300) {
+					const int y = (img.height() - 300) / 2;
+					img = img.copy(0, y, img.width(), 300);
+				}
+				emit fanartReady(fileId, outPath, img);
+			}
+		}
 		rec.imdbId      = imdbId;
 		rec.voteAverage = info.voteAverage;
 		rec.voteCount   = info.voteCount;
@@ -270,6 +355,7 @@ private:
 
 	struct TmdbInfo {
 		QString posterPath;
+		QString backdropPath;  // best backdrop for use as card fanart
 		double  voteAverage = 0.0;
 		int     voteCount   = 0;
 		QString title;
@@ -292,6 +378,7 @@ private:
 		const QJsonObject obj = results.first().toObject();
 		const int year = obj["release_date"].toString().left(4).toInt();
 		return { obj["poster_path"].toString(),
+		         obj["backdrop_path"].toString(),
 		         obj["vote_average"].toDouble(),
 		         obj["vote_count"].toInt(),
 		         obj["title"].toString(),
@@ -347,6 +434,7 @@ private:
 			if (imdbId.isEmpty()) return {};
 
 			return { obj["poster_path"].toString(),
+			         obj["backdrop_path"].toString(),
 			         obj["vote_average"].toDouble(),
 			         obj["vote_count"].toInt(),
 			         obj["title"].toString(),
@@ -401,34 +489,43 @@ private:
 		QNetworkRequest req(url);
 		req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
 		                 QNetworkRequest::NoLessSafeRedirectPolicy);
-		QNetworkReply* reply = m_nam->get(req);
+		m_currentReply = m_nam->get(req);
 
 		QEventLoop loop;
-		connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+		connect(m_currentReply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
 		loop.exec();
+
+		QNetworkReply* reply = m_currentReply;
+		m_currentReply = nullptr;
+		if (!reply) return false;   // aborted before loop started (extremely unlikely)
 
 		const bool ok = (reply->error() == QNetworkReply::NoError);
 		if (ok) out = reply->readAll();
-		else    qWarning() << "PosterWorker HTTP error:" << reply->errorString() << url;
+		else if (reply->error() != QNetworkReply::OperationCanceledError)
+			qWarning() << "PosterWorker HTTP error:" << reply->errorString() << url;
 		reply->deleteLater();
 		return ok;
 	}
 
-	bool downloadImage(const QString& url, const QString& outputPath)
+	bool downloadImage(const QString& url, const QString& outputPath,
+	                   QByteArray* outBytes = nullptr)
 	{
 		QByteArray data;
 		if (!fetchHttp(QUrl(url), data) || data.isEmpty()) return false;
 		QFile f(outputPath);
 		if (!f.open(QIODevice::WriteOnly)) return false;
 		f.write(data);
+		if (outBytes) *outBytes = std::move(data);
 		return true;
 	}
 
-	QNetworkAccessManager* m_nam        = nullptr;
-	QTimer*                m_timer      = nullptr;
+	QNetworkAccessManager* m_nam          = nullptr;
+	QTimer*                m_timer        = nullptr;
+	QNetworkReply*         m_currentReply = nullptr;
 	QList<qint64>          m_queue;
 	QString                m_tmdbApiKey;
 	QString                m_cacheDir;
+	QString                m_fanartDir;
 	bool                   m_stopping   = false;
 	bool                   m_processing = false;
 };
@@ -467,6 +564,8 @@ void PosterManager::start(const QString& tmdbApiKey)
 
 	connect(m_worker, &PosterWorker::posterReady,
 	        this,     &PosterManager::posterReady);
+	connect(m_worker, &PosterWorker::fanartReady,
+	        this,     &PosterManager::fanartReady);
 	connect(m_worker, &PosterWorker::tmdbDataReady,
 	        this,     &PosterManager::tmdbDataReady);
 
@@ -515,7 +614,8 @@ void PosterManager::enqueue(qint64 fileId)
 
 void PosterManager::refresh(qint64 fileId, const QString& posterPath,
                              const QByteArray& imageData, const QString& imdbIdHint,
-                             double voteAverage, int voteCount)
+                             double voteAverage, int voteCount,
+                             const QString& fanartTmdbPath)
 {
 	const auto rec = DatabaseManager::instance().posterForFile(fileId);
 	const QString imdbId = !imdbIdHint.isEmpty() ? imdbIdHint
@@ -529,11 +629,51 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 		emit imdbIdSaved(fileId, imdbIdHint);
 	}
 
-	const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
-	                         + "/posters";
+	const QString cacheDir  = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+	                          + "/posters";
+	const QString fanartDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+	                          + "/fanart";
+	const QString fanartStem = imdbId.isEmpty() ? QString::number(fileId) : imdbId;
+	const QString fanartOut  = fanartDir + "/" + fanartStem + ".jpg";
 
 	if (rec && !rec->imagePath.isEmpty())
 		QFile::remove(rec->imagePath);
+
+	// Downloads the user-selected backdrop at w1280 and emits fanartReady.
+	// Only fires when the caller provided a TMDB fanart path (i.e. the user picked
+	// a specific backdrop in the dialog).  Captures all state by value so it is
+	// safe to copy into async reply lambdas.
+	auto schedFanart = [this, fanartTmdbPath, fanartDir, fanartOut, fileId]() {
+		if (fanartTmdbPath.isEmpty() || !m_nam) return;
+		QDir().mkpath(fanartDir);
+		QNetworkRequest req(QUrl(QStringLiteral("https://image.tmdb.org/t/p/w1280%1").arg(fanartTmdbPath)));
+		req.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+		req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+		                 QNetworkRequest::NoLessSafeRedirectPolicy);
+		QNetworkReply* r = m_nam->get(req);
+		connect(r, &QNetworkReply::finished, this, [this, r, fileId, fanartOut]() {
+			r->deleteLater();
+			if (r->error() != QNetworkReply::NoError) return;
+			const QByteArray bytes = r->readAll();
+			if (bytes.isEmpty()) return;
+			QFile f(fanartOut);
+			if (!f.open(QIODevice::WriteOnly)) return;
+			f.write(bytes);
+			f.close();
+			const auto existing = DatabaseManager::instance().posterForFile(fileId);
+			PosterRecord pr = existing ? *existing : PosterRecord{};
+			pr.fileId     = fileId;
+			pr.fanartPath = fanartOut;
+			DatabaseManager::instance().upsertPosterRecord(pr);
+			QImage img;
+			img.loadFromData(bytes);
+			if (!img.isNull() && img.height() > 300) {
+				const int y = (img.height() - 300) / 2;
+				img = img.copy(0, y, img.width(), 300);
+			}
+			emit fanartReady(fileId, fanartOut, img);
+		});
+	};
 
 	// Helper: write bytes to disk and notify the model.
 	const auto writePoster = [&](const QByteArray& bytes) -> bool {
@@ -556,12 +696,17 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 		pr.voteCount    = voteCount;
 		DatabaseManager::instance().upsertPosterRecord(pr);
 		emit posterReady(fileId, outPath);
+		if (fanartTmdbPath.isEmpty())
+			emit workerEnqueueFile(fileId);
 		return true;
 	};
 
 	// Path 1 — bytes already available (dialog thumbnail was ready): write directly, instant.
 	if (!imageData.isEmpty()) {
-		if (writePoster(imageData)) return;
+		if (writePoster(imageData)) {
+			schedFanart();
+			return;
+		}
 	}
 
 	// Path 2 — poster_path known but no bytes: download asynchronously on the persistent
@@ -575,7 +720,8 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 		                 QNetworkRequest::NoLessSafeRedirectPolicy);
 		QNetworkReply* reply = m_nam->get(req);
 		connect(reply, &QNetworkReply::finished, this,
-		        [this, reply, fileId, imdbId, cacheDir, voteAverage, voteCount]() {
+		        [this, reply, fileId, imdbId, cacheDir, voteAverage, voteCount,
+		         fanartTmdbPath, schedFanart]() mutable {
 			if (reply->error() == QNetworkReply::NoError) {
 				const QByteArray bytes = reply->readAll();
 				if (!bytes.isEmpty()) {
@@ -597,6 +743,10 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 						pr.voteCount   = voteCount;
 						DatabaseManager::instance().upsertPosterRecord(pr);
 						emit posterReady(fileId, outPath);
+						if (fanartTmdbPath.isEmpty())
+							emit workerEnqueueFile(fileId);
+						else
+							schedFanart();
 					}
 				}
 			} else {
