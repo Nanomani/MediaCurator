@@ -1025,13 +1025,12 @@ QList<qint64> McJobPanel::visibleFileIds() const
 
 void McJobPanel::scrollToFileJob(qint64 fileId)
 {
-	// Switch to the "Proposed" filter so the new job is visible.
-	for (int i = 0; i < m_statusFilter->count(); ++i) {
-		if (m_statusFilter->itemData(i).toString() == QLatin1String("proposed")) {
-			m_statusFilter->setCurrentIndex(i);
-			break;
-		}
-	}
+	// Only select+scroll when the current filter already shows proposed jobs.
+	// "All" (empty data) also qualifies. Don't force a filter change — the user
+	// may be looking at done/failed jobs and a sudden filter switch is disruptive.
+	const QString currentFilter = m_statusFilter->currentData().toString();
+	if (!currentFilter.isEmpty() && currentFilter != QLatin1String("proposed"))
+		return;
 
 	for (int row = 0; row < m_model->rowCount(); ++row) {
 		const QModelIndex idx = m_model->index(row);

@@ -6,6 +6,7 @@
       "type": "commentary",
       "confidence": 0.95,
       "patterns": [
+        "\\bcommentary\\b",
         "director.{0,5}comment",
         "cast.*comment",
         "comment.*track",

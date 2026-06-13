@@ -249,11 +249,20 @@ FileDecision RuleEngine::evaluateFile(const FileRecord& file, const QList<Stream
 	// so a track identified as SDH only by its title (no hearing_impaired disposition)
 	// is not incorrectly placed into langsWithNonSdhSub, which would cause it to
 	// satisfy its own "non-SDH alternative exists" guard and remove itself.
+	// Commentary and signs subtitles are separate content buckets — they must not be
+	// counted as regular-subtitle alternatives when deciding whether to remove an SDH
+	// track. E.g. "English (Commentary #1)" must not make "English (SDH)" look redundant.
 	QSet<QString> langsWithNonSdhSub, langsWithSdhSub;
 	for (const StreamRecord& s : streams) {
 		if (s.codecType != "subtitle") continue;
 		const QString lang = normalizeLang(s.language);
 		const ClassificationResult preCls = classifier.classify(s.title, s.language, s.codecName);
+		const bool isCommentaryOrSigns =
+		    (preCls.type == TrackType::Commentary && preCls.confidence >= 0.80)
+		    || s.trackType == QLatin1String("commentary")
+		    || (preCls.type == TrackType::Signs && preCls.confidence >= 0.90)
+		    || s.trackType == QLatin1String("signs");
+		if (isCommentaryOrSigns) continue;
 		const bool isSdhStream = s.isHearingImpaired || s.trackType == "sdh"
 		                         || preCls.type == TrackType::Sdh
 		                         || preCls.type == TrackType::HearingImpaired;

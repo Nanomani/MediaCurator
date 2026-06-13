@@ -524,6 +524,40 @@ void McJobListModel::toggleStream(const QModelIndex& index, int streamIndex)
 		}
 	}
 
+	// Commentary cascade: when the user removes the only kept commentary audio track
+	// and there is exactly one kept commentary subtitle, also remove that subtitle.
+	// Counts are taken from keptStreams (not allStreams) so non-understood tracks
+	// already removed by the rule engine do not inflate the count or trigger a false
+	// cascade. The just-removed audio is no longer in keptStreams at this point, so
+	// we add 1 manually to correctly read "there was exactly 1 commentary audio kept".
+	if (wasKept) {
+		const StreamRecord* src = nullptr;
+		for (const auto& s : filt.allStreams)
+			if (s.streamIndex == streamIndex) { src = &s; break; }
+
+		const auto isCommentaryTrack = [](const StreamRecord& s) {
+			return s.trackType == QLatin1String("commentary") || s.isCommentary;
+		};
+
+		if (src && src->codecType == QLatin1String("audio") && isCommentaryTrack(*src)) {
+			int commentaryAudioKept = 1; // +1 for the audio just removed above
+			int commentarySubKept = 0, commentarySubIdx = -1;
+			for (const auto& k : filt.keptStreams) {
+				if (!isCommentaryTrack(k)) continue;
+				if (k.codecType == QLatin1String("audio"))    ++commentaryAudioKept;
+				if (k.codecType == QLatin1String("subtitle")) { ++commentarySubKept; commentarySubIdx = k.streamIndex; }
+			}
+			if (commentaryAudioKept == 1 && commentarySubKept == 1) {
+				for (int i = 0; i < filt.keptStreams.size(); ++i) {
+					if (filt.keptStreams[i].streamIndex == commentarySubIdx) {
+						filt.keptStreams.removeAt(i);
+						break;
+					}
+				}
+			}
+		}
+	}
+
 	// Sync the master list so filter re-apply preserves the change
 	for (auto& ae : m_allEntries) {
 		if (ae.job.jobId == jobId) {
