@@ -12,21 +12,29 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
-// Preserve the filesystem creation timestamp of an original file on the output file.
-// Called after rename so the new file doesn't show today as its creation date.
-static void preserveCreationTime(const QString& target, const QDateTime& origCreated)
+static FILETIME toFileTime(const QDateTime& dt)
 {
-	if (!origCreated.isValid()) return;
-	// QDateTime → FILETIME (100-ns intervals since 1601-01-01 UTC)
-	const qint64 ns100 = (origCreated.toMSecsSinceEpoch() + Q_INT64_C(11644473600000)) * 10000;
+	const qint64 ns100 = (dt.toMSecsSinceEpoch() + Q_INT64_C(11644473600000)) * 10000;
 	FILETIME ft;
 	ft.dwLowDateTime  = static_cast<DWORD>(ns100 & 0xFFFFFFFF);
 	ft.dwHighDateTime = static_cast<DWORD>((ns100 >> 32) & 0xFFFFFFFF);
+	return ft;
+}
+// Restore both the creation and last-modified timestamps from the original file
+// on the output file so the processed file doesn't bubble up as "newest" in
+// media libraries that sort by Date Modified.
+static void preserveTimestamps(const QString& target, const QDateTime& origCreated, const QDateTime& origModified)
+{
 	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(target.utf16()),
 	                       FILE_WRITE_ATTRIBUTES, 0, nullptr, OPEN_EXISTING,
 	                       FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (h == INVALID_HANDLE_VALUE) return;
-	SetFileTime(h, &ft, nullptr, nullptr);
+	FILETIME ftCreated  = origCreated.isValid()  ? toFileTime(origCreated)  : FILETIME{};
+	FILETIME ftModified = origModified.isValid() ? toFileTime(origModified) : FILETIME{};
+	SetFileTime(h,
+	            origCreated.isValid()  ? &ftCreated  : nullptr,
+	            nullptr,
+	            origModified.isValid() ? &ftModified : nullptr);
 	CloseHandle(h);
 }
 #endif
@@ -149,17 +157,19 @@ void RemuxJob::onProcessFinished(int exitCode)
 		}
 		const qint64 outputSize = QFileInfo(m_outputPath).size();
 
-		// Capture the original file's creation timestamp before we rename/delete it
-		const QDateTime origCreated = QFileInfo(m_inputPath).birthTime();
+		// Capture the original file's timestamps before we rename/delete it
+		const QFileInfo origFi(m_inputPath);
+		const QDateTime origCreated  = origFi.birthTime();
+		const QDateTime origModified = origFi.lastModified();
 
 		const bool isInPlace = (m_finalOutputPath == m_inputPath);
 		try {
 			// Rename temp file to final destination (same as input for MKV in-place)
 			std::filesystem::rename(m_outputPath.toStdWString(),
 			                        m_finalOutputPath.toStdWString());
-			// Restore the original file's creation date on the new output
+			// Restore the original file's timestamps on the new output
 #ifdef Q_OS_WIN
-			preserveCreationTime(m_finalOutputPath, origCreated);
+			preserveTimestamps(m_finalOutputPath, origCreated, origModified);
 #endif
 			if (!isInPlace) {
 				// Non-MKV conversion (mp4/avi/iso → mkv): delete the original

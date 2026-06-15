@@ -239,6 +239,12 @@ McMainWindow::McMainWindow(QWidget* parent)
 	setupActions();
 	setupUi();
 	m_jobPanel->setVisible(false);   // hidden until we know there are jobs
+	{
+		const int saved = AppSettings::instance().value("library/sortOrder", McFilterPanel::SortByName).toInt();
+		const int idx   = m_filterPanel->sortCombo()->findData(saved);
+		if (idx > 0)
+			m_filterPanel->sortCombo()->setCurrentIndex(idx);
+	}
 	if (const QByteArray sp = s.value("mainWindow/splitter").toByteArray(); !sp.isEmpty()) {
 		m_splitter->restoreState(sp);
 		m_splitterRestored = true;
@@ -1396,6 +1402,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 
 	AppSettings::instance().setValue("mainWindow/jobPanelHeight", m_savedJobPanelHeight);
 	AppSettings::instance().setValue("mainWindow/queueHidden",    m_jobPanelPinned);
+	AppSettings::instance().setValue("library/sortOrder",         m_filterPanel->sortCombo()->currentData().toInt());
 	event->accept();
 }
 

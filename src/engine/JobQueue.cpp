@@ -24,18 +24,26 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
-static void preserveCreationTime(const QString& target, const QDateTime& origCreated)
+static FILETIME toFileTime(const QDateTime& dt)
 {
-	if (!origCreated.isValid()) return;
-	const qint64 ns100 = (origCreated.toMSecsSinceEpoch() + Q_INT64_C(11644473600000)) * 10000;
+	const qint64 ns100 = (dt.toMSecsSinceEpoch() + Q_INT64_C(11644473600000)) * 10000;
 	FILETIME ft;
 	ft.dwLowDateTime  = static_cast<DWORD>(ns100 & 0xFFFFFFFF);
 	ft.dwHighDateTime = static_cast<DWORD>((ns100 >> 32) & 0xFFFFFFFF);
+	return ft;
+}
+static void preserveTimestamps(const QString& target, const QDateTime& origCreated, const QDateTime& origModified)
+{
 	HANDLE h = CreateFileW(reinterpret_cast<const wchar_t*>(target.utf16()),
 	                       FILE_WRITE_ATTRIBUTES, 0, nullptr, OPEN_EXISTING,
 	                       FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (h == INVALID_HANDLE_VALUE) return;
-	SetFileTime(h, &ft, nullptr, nullptr);
+	FILETIME ftCreated  = origCreated.isValid()  ? toFileTime(origCreated)  : FILETIME{};
+	FILETIME ftModified = origModified.isValid() ? toFileTime(origModified) : FILETIME{};
+	SetFileTime(h,
+	            origCreated.isValid()  ? &ftCreated  : nullptr,
+	            nullptr,
+	            origModified.isValid() ? &ftModified : nullptr);
 	CloseHandle(h);
 }
 #endif
@@ -510,14 +518,16 @@ void JobQueue::commitReview(qint64 jobId)
 	auto& db = DatabaseManager::instance();
 
 	const bool isInPlace = (finalPath == srcPath);
-	const QDateTime origCreated = QFileInfo(srcPath).birthTime();
+	const QFileInfo origFi(srcPath);
+	const QDateTime origCreated  = origFi.birthTime();
+	const QDateTime origModified = origFi.lastModified();
 
 	qint64 savedBytes = 0;
 	try {
 		const qint64 outputSize = QFileInfo(tmpPath).size();
 		std::filesystem::rename(tmpPath.toStdWString(), finalPath.toStdWString());
 #ifdef Q_OS_WIN
-		preserveCreationTime(finalPath, origCreated);
+		preserveTimestamps(finalPath, origCreated, origModified);
 #endif
 		if (!isInPlace)
 			QFile::remove(srcPath);
