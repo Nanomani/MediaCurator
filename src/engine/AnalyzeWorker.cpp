@@ -154,6 +154,7 @@ bool AnalyzeWorker::analyzeFile(const FileRecord& fileIn)
 	job.descriptionText     = descLines.join(QLatin1Char('\n'));
 	job.originalStreamsJson  = QJsonDocument(origArr).toJson(QJsonDocument::Compact);
 	job.savedBytes          = estimatedSavings;
+	job.estimatedSavedBytes = estimatedSavings;
 	job.flagChangesJson     = inheritedFlagChanges;
 	(void)db.insertJob(job);
 

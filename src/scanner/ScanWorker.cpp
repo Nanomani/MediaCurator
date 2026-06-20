@@ -221,8 +221,14 @@ void ScanWorker::run()
 		allStreams.append(sidecars);
 		db.insertStreams(*fileId, allStreams);
 
-		if (existed) ++updated;
-		else         ++added;
+		if (existed) {
+			++updated;
+			// File changed on disk — any pending remux job was built against the old
+			// stream layout and would cause a track-mismatch error if run now.
+			db.deletePendingJobsForFile(*fileId);
+		} else {
+			++added;
+		}
 
 		// Resolve IMDb ID: embedded container tag takes priority, then .nfo sidecar.
 		// Store immediately so the poster worker can begin TMDB lookup without delay.

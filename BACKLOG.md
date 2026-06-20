@@ -76,7 +76,6 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 - [x] `[P3]` **Status combobox badge delegate** — the job-panel status filter combobox items (proposed / pending / running / done / failed) should render using the same pill style as the card badges: coloured background, rounded rect, matching font size and padding; implement as a `QStyledItemDelegate` on the combobox's view
 - [x] `[P2]` **ETA display in job panel** — show estimated time remaining for the current job (based on elapsed time vs progress %) and for the whole queue (sum of per-job estimates using average MB/s from completed jobs); displayed in the McJobPanel footer next to the space-saved total
 - [ ] `[P3]` Parallel jobs — configurable worker count (2–4); useful on NAS/RAID where I/O is not the bottleneck
-- [ ] `[P3]` Job export — save queue as .bat/.sh mkvmerge script for manual review
 
 ---
 
@@ -129,8 +128,6 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done · `[-]` deferred
 - [ ] `[P2]` **Parallel TMDB enrichment** — PosterWorker currently processes one file at a time with a synchronous QEventLoop HTTP call (~200–400 ms per round-trip), so 3 000 files takes ~20–30 min to enrich. TMDB's rate limit is ~40–50 req/s per IP; each file costs 1 req (IMDb ID known) or 2 req (title search). Approach: replace the single-timer loop with a fixed pool of N concurrent workers (suggest N = 8, well under the rate limit). Each worker is a `QObject` living on its own `QThread` with its own `QNetworkAccessManager`; the shared queue is protected by a `QMutex`. Alternatively, keep the single thread but switch from QEventLoop-blocking calls to chained `QNetworkReply::finished` lambdas so N requests are in-flight simultaneously without extra threads. Either approach should reduce enrichment time for 3 000 files from ~25 min to ~3–4 min.
 - [ ] `[P3]` HDR metadata display (MaxCLL, MaxFALL, mastering display)
 - [ ] `[P3]` Duplicate file detection (same title, different quality)
-- [ ] `[P3]` Chapter editor (view/remove chapters)
-- [ ] `[P3]` Attachment management (embedded fonts, cover art)
 - [ ] `[P3]` Export library to CSV/JSON for external scripting
 - [x] `[P3]` Dark mode / theme support — Qt 6 picks up the Windows system dark palette; UI and icons adapt automatically
 - [ ] `[P3]` Keyboard shortcuts for power users

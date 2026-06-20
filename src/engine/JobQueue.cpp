@@ -308,7 +308,7 @@ void JobQueue::startJob(const JobRecord& job)
 	m_currentJob->run();
 }
 
-void JobQueue::rescanFile(qint64 fileId, const QString& filePath)
+void JobQueue::rescanFile(qint64 fileId, const QString& filePath, bool triggerReanalysis)
 {
 	auto& db             = DatabaseManager::instance();
 	const auto fileOpt   = db.fileById(fileId);
@@ -318,7 +318,7 @@ void JobQueue::rescanFile(qint64 fileId, const QString& filePath)
 	fileCopy.path          = filePath.isEmpty() ? fileCopy.path : filePath;
 	const QString ffprobePath = ExternalTools::instance().ffprobePath();
 
-	QThreadPool::globalInstance()->start([this, fileId, fileCopy, ffprobePath]() {
+	QThreadPool::globalInstance()->start([this, fileId, fileCopy, ffprobePath, triggerReanalysis]() {
 		FfprobeScanner scanner(ffprobePath);
 		const FfprobeScanner::ScanResult result = scanner.scanFile(fileCopy.path);
 		if (!result.success) {
@@ -337,7 +337,12 @@ void JobQueue::rescanFile(qint64 fileId, const QString& filePath)
 		auto allStreams      = result.streams;
 		allStreams.append(sidecars);
 		db2.insertStreams(fileId, allStreams);
+		// Any pending job built before this rescan used the old stream layout and
+		// will cause a track-mismatch error if run now — delete it.
+		db2.deletePendingJobsForFile(fileId);
 		emit fileRescanned(fileId);
+		if (triggerReanalysis)
+			emit fileNeedsReanalysis(fileId);
 	});
 }
 
@@ -580,9 +585,8 @@ void JobQueue::rejectReview(qint64 jobId, bool reanalyze)
 	auto& db = DatabaseManager::instance();
 	if (reanalyze) {
 		db.deleteJob(jobId);
-		// Rescan so the library reflects current state; user can re-analyze from there
 		if (fileId > 0)
-			rescanFile(fileId, {});
+			rescanFile(fileId, {}, /*triggerReanalysis=*/true);
 	} else {
 		db.updateJobStatus(jobId, "failed", -3);
 	}

@@ -481,8 +481,11 @@ void McJobPanel::setupUi()
 	connect(m_listView->selectionModel(), &QItemSelectionModel::selectionChanged,
 	        this, [this]() {
 		const auto selected = m_listView->selectionModel()->selectedIndexes();
-		const bool has = !selected.isEmpty();
-		m_btnRemove->setEnabled(has);
+		const bool hasRemovable = std::any_of(selected.cbegin(), selected.cend(),
+		    [](const QModelIndex& idx) {
+		        return idx.data(McJobListModel::StatusRole).toString() != QLatin1String("running");
+		    });
+		m_btnRemove->setEnabled(hasRemovable);
 		const bool hasProposed = std::any_of(selected.cbegin(), selected.cend(),
 		    [](const QModelIndex& idx) {
 		        return idx.data(McJobListModel::StatusRole).toString() == "proposed";
@@ -848,19 +851,19 @@ void McJobPanel::setupUi()
 					savingsLabel->setTextFormat(Qt::RichText);
 
 					if (rec->savedBytes > 0 && rec->estimatedSavedBytes > 0) {
-						const qint64 diff   = rec->savedBytes - rec->estimatedSavedBytes;
-						const double pct    = 100.0 * rec->savedBytes / rec->estimatedSavedBytes;
-						const QString sign  = diff >= 0 ? QStringLiteral("+") : QString();
-						const QString color = qAbs(diff) < 1048576 ? QStringLiteral("green")
-						                    : diff > 0              ? QStringLiteral("darkorange")
-						                    :                         QStringLiteral("crimson");
+						const qint64 diff     = rec->savedBytes - rec->estimatedSavedBytes;
+						const double pctDiff  = 100.0 * diff / rec->estimatedSavedBytes;
+						const QString sign    = diff >= 0 ? QStringLiteral("+") : QString();
+						const QString color   = qAbs(diff) < 1048576 ? QStringLiteral("green")
+						                      : diff > 0              ? QStringLiteral("darkorange")
+						                      :                         QStringLiteral("crimson");
+						const QString actWithPct = QStringLiteral("%1 <span style='color:%2'>(%3%4%)</span>")
+						    .arg(actStr, color, sign)
+						    .arg(pctDiff, 0, 'f', 1);
 						savingsLabel->setText(
-							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>  |  "
-							   "Delta: <b><span style='color:%3'>%4%5</span></b>  |  "
-							   "Accuracy: <b><span style='color:%3'>%6%</span></b>")
-							.arg(estStr, actStr, color, sign)
-							.arg(fmtMB(qAbs(diff)))
-							.arg(pct, 0, 'f', 1));
+							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>  |  Delta: <b><span style='color:%3'>%4%5</span></b>")
+							.arg(estStr, actWithPct, color, sign)
+							.arg(fmtMB(qAbs(diff))));
 					} else {
 						savingsLabel->setText(
 							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>")
@@ -1093,6 +1096,16 @@ void McJobPanel::onJobStatusChanged(qint64 jobId, const QString& status)
 {
 	m_model->updateJob(jobId, status);
 	updateFooter();
+	// If a job just became running, it may be selected — re-check Remove availability
+	// since selectionChanged won't fire when only the data changes.
+	if (status == QLatin1String("running")) {
+		const auto selected = m_listView->selectionModel()->selectedIndexes();
+		const bool hasRemovable = std::any_of(selected.cbegin(), selected.cend(),
+		    [](const QModelIndex& idx) {
+		        return idx.data(McJobListModel::StatusRole).toString() != QLatin1String("running");
+		    });
+		m_btnRemove->setEnabled(hasRemovable);
+	}
 }
 
 void McJobPanel::repaintCards()
@@ -1350,11 +1363,19 @@ void McJobPanel::updateStatusCombo()
 	    { QStringLiteral("done"),     tr("Done")     },
 	    { QStringLiteral("failed"),   tr("Failed")   },
 	};
+	const int queuedCount = counts.value(QStringLiteral("queued"), 0);
 	for (int i = 0; i < items.size(); ++i) {
 		const QString& key   = items[i].first;
 		const QString& label = items[i].second;
 		const int n = counts.value(key, 0);
-		const QString text = n > 0 ? QStringLiteral("%1 (%2)").arg(label).arg(n) : label;
+		QString text;
+		if (n <= 0) {
+			text = label;
+		} else if (key == QLatin1String("running") && queuedCount > 0) {
+			text = QStringLiteral("%1 (%2/%3)").arg(label).arg(n).arg(n + queuedCount);
+		} else {
+			text = QStringLiteral("%1 (%2)").arg(label).arg(n);
+		}
 		m_statusFilter->setItemText(i + 2, text);
 	}
 

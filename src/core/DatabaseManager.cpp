@@ -926,8 +926,8 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.addBindValue(QDateTime::currentSecsSinceEpoch());
 	q.addBindValue(job.descriptionText);
 	q.addBindValue(job.originalStreamsJson);
-	q.addBindValue(job.savedBytes);          // estimate at creation; overwritten on completion
-	q.addBindValue(job.savedBytes);          // estimated_saved_bytes: frozen at creation
+	q.addBindValue(job.savedBytes);           // estimate at creation; overwritten on completion
+	q.addBindValue(job.estimatedSavedBytes); // frozen at creation, never overwritten
 	q.addBindValue(job.flagChangesJson);
 	q.addBindValue(job.sidecarDeletionsJson);
 	if (!q.exec()) {
@@ -1128,6 +1128,14 @@ void DatabaseManager::deleteJobsForFile(qint64 fileId)
 {
 	QSqlQuery q(connection());
 	q.prepare("DELETE FROM jobs WHERE file_id=? AND status != 'running'");
+	q.addBindValue(fileId);
+	q.exec();
+}
+
+void DatabaseManager::deletePendingJobsForFile(qint64 fileId)
+{
+	QSqlQuery q(connection());
+	q.prepare("DELETE FROM jobs WHERE file_id=? AND status IN ('proposed','queued')");
 	q.addBindValue(fileId);
 	q.exec();
 }

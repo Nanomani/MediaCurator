@@ -270,6 +270,19 @@ McMainWindow::McMainWindow(QWidget* parent)
 			d->invalidateSizeCacheFor(fid);
 		PosterManager::instance().enqueue(fid);
 	});
+	// After a track-mismatch re-analyze rescan completes, auto-analyze just that file
+	// so the user doesn't have to manually click Analyze Library.
+	connect(m_jobQueue, &JobQueue::fileNeedsReanalysis,
+	        this, [this](qint64 fileId) {
+		if (m_analyzeThread) return;  // full analysis running — it'll cover this file
+		const bool created = analyzeSingleFile(fileId);
+		m_jobPanel->refresh();
+		m_listModel->refreshJobFilter();
+		if (created) {
+			updateJobPanelVisibility(/*forceShow=*/true);
+			m_jobPanel->scrollToFileJob(fileId);
+		}
+	});
 
 	m_analyzeRefreshTimer = new QTimer(this);
 	m_analyzeRefreshTimer->setSingleShot(true);
@@ -1800,7 +1813,9 @@ void McMainWindow::onAnalyzeLibrary()
 	if (m_analyzeThread) return;   // already running
 
 	auto& db = DatabaseManager::instance();
-	const auto files = db.allFiles();
+	QList<FileRecord> files;
+	for (const auto& f : db.allFiles())
+		if (!f.ignored) files << f;
 	if (files.isEmpty()) {
 		m_statusLabel->setText(tr("No files in library to analyze."));
 		return;

@@ -101,10 +101,7 @@ If MediaCurator saves you money on storage or just makes managing your media lib
 
 ## Roadmap
 
-- **Poster selection** — browse all available TMDB posters for a movie and pick the best one
 - **Fanart / backdrop selection** — fetch and save backdrop images as `fanart.jpg` for Plex and Kodi
-- **Rating display and filter** — show IMDb/TMDB ratings as badges on cards; filter library by rating range
 - **Job history** — persistent log of all completed jobs, viewable in a separate History tab
-- **Undo to recycle bin** — move the original file to the OS recycle bin before overwriting, so jobs can be undone
 - **Parallel jobs** — configurable worker count (2–4) for faster processing on NAS/RAID setups
 - **Automatic update check** — notify when a new GitHub release is available

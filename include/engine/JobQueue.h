@@ -33,6 +33,8 @@ signals:
 	void jobStarted(qint64 jobId);
 	void jobFinished(qint64 jobId, bool success, qint64 savedBytes);
 	void fileRescanned(qint64 fileId);
+	// Emitted after the post-mismatch rescan completes — main window auto-analyzes this file.
+	void fileNeedsReanalysis(qint64 fileId);
 	void allFinished();
 	void progressChanged(qint64 jobId, int percent);
 	void warning(const QString& message);
@@ -63,7 +65,7 @@ private slots:
 private:
 	void runNext();
 	void startJob(const JobRecord& job);
-	void rescanFile(qint64 fileId, const QString& filePath);
+	void rescanFile(qint64 fileId, const QString& filePath, bool triggerReanalysis = false);
 
 	RemuxJob*      m_currentJob   = nullptr;
 	qint64         m_currentJobId = -1;

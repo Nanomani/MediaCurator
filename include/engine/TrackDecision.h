@@ -34,7 +34,8 @@ inline qint64 estimateSavingBytes(const QList<StreamRecord>& allStreams,
 	double totalBr = 0.0, removedBr = 0.0;
 	for (const StreamRecord& s : allStreams) {
 		const double br = s.bitRate > 0 ? static_cast<double>(s.bitRate)
-		                : s.codecType == QLatin1String("subtitle") ? 50'000.0 : 0.0;
+		                : s.codecType == QLatin1String("subtitle") ? 50'000.0
+		                : s.codecType == QLatin1String("audio")    ? 256'000.0 : 0.0;
 		totalBr += br;
 		if (removedStreamIndices.contains(s.streamIndex))
 			removedBr += br;
