@@ -33,6 +33,7 @@ set(MC_SOURCES
     ui/McJobStatsBar.cpp
     ui/ImdbSearchDialog.cpp
     ui/McSubtitleDownloadDialog.cpp
+    ui/McCalibrationDialog.cpp
     ui/SvgIcon.cpp
 
     # Engine
@@ -106,6 +107,7 @@ set(MC_HEADERS
     ../include/ui/McSettingsDialog.h
     ../include/ui/ImdbSearchDialog.h
     ../include/ui/McSubtitleDownloadDialog.h
+    ../include/ui/McCalibrationDialog.h
     ../include/ui/SvgIcon.h
     ../include/ui/McFlagRowWidget.h
 )

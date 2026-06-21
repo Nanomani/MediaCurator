@@ -18,6 +18,7 @@
 #include "engine/JobQueue.h"
 #include "engine/OpenSubtitlesClient.h"
 #include "ui/McSubtitleDownloadDialog.h"
+#include "ui/McCalibrationDialog.h"
 #include "engine/PosterManager.h"
 #include "engine/RuleEngine.h"
 #include "engine/TrackDecision.h"
@@ -1262,6 +1263,13 @@ void McMainWindow::setupMenuBar()
 	toolsMenu->addAction(m_actSimulate);
 	toolsMenu->addSeparator();
 	toolsMenu->addAction(m_actSettings);
+	toolsMenu->addSeparator();
+	auto* calibAct = new QAction(tr("Estimation Calibration Data…"), this);
+	connect(calibAct, &QAction::triggered, this, [this] {
+		auto* dlg = new Mc::McCalibrationDialog(this);
+		dlg->exec();
+	});
+	toolsMenu->addAction(calibAct);
 
 	// Help menu
 	QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));

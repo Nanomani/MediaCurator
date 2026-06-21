@@ -84,8 +84,24 @@ struct JobRecord {
 	qint64      estimatedSavedBytes = 0; // estimate recorded at job-creation time
 	QString     descriptionText;      // human-readable list of removed tracks
 	QString     originalStreamsJson;  // stream snapshot taken before remux — for done-job display
-	QString     flagChangesJson;      // JSON array of {streamIndex, flag, value} flag overrides
-	QString     sidecarDeletionsJson; // JSON array of sidecar file paths to delete alongside this job
+	QString     flagChangesJson;       // JSON array of {streamIndex, flag, value} flag overrides
+	QString     sidecarDeletionsJson;  // JSON array of sidecar file paths to delete alongside this job
+	QString     streamEstimatesJson;   // per-track estimates recorded at job-creation time (calibration)
+};
+
+// One row per (codec_name, used_fallback) in the calibration table.
+// avgRatio = mean(saved_bytes / estimated_saved_bytes) across all completed jobs
+// that removed a track of this codec. Values < 1.0 mean we over-estimated;
+// values > 1.0 mean we under-estimated. Only usedFallback entries have a
+// meaningful suggestedFallback — for declared-bitrate tracks the ratio tells
+// you how accurate ffprobe's declared values are for this codec family.
+struct CalibrationEntry {
+	QString codecName;
+	QString codecType;
+	bool    usedFallback = false;
+	int     sampleCount  = 0;
+	double  avgRatio     = 1.0;
+	double  stdDevRatio  = 0.0;
 };
 
 // Poster / enrichment cache
@@ -182,6 +198,9 @@ public:
 	[[nodiscard]] qint64 insertJob(const JobRecord& job);
 	bool updateJobStatus(qint64 jobId, const QString& status, int resultCode = -1, const QString& log = {});
 	bool updateJobSavedBytes(qint64 jobId, qint64 savedBytes);
+	void updateCalibrationFromJob(qint64 jobId);
+	[[nodiscard]] QList<CalibrationEntry> calibrationReport() const;
+	void clearCalibration();
 	bool updateJobType(qint64 jobId, const QString& jobType);
 	bool updateJobCommandArgs(qint64 jobId, const QString& commandArgsJson);
 	bool updateJobFlagChanges(qint64 jobId, const QString& flagChangesJson);

@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
@@ -336,6 +337,28 @@ bool DatabaseManager::initSchema()
 		m.exec("ALTER TABLE streams ADD COLUMN is_external INTEGER DEFAULT 0");
 		m.exec("ALTER TABLE streams ADD COLUMN external_path TEXT DEFAULT ''");
 		m.exec("ALTER TABLE jobs ADD COLUMN sidecar_deletions_json TEXT DEFAULT ''");
+	}
+
+	// Migration: add per-track estimate breakdown for calibration
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE jobs ADD COLUMN stream_estimates_json TEXT DEFAULT ''");
+	}
+
+	// Migration: add codec calibration table (running accuracy ratios per codec)
+	{
+		QSqlQuery m(connection());
+		m.exec(R"(
+			CREATE TABLE IF NOT EXISTS codec_calibration (
+				codec_name    TEXT    NOT NULL,
+				codec_type    TEXT    NOT NULL,
+				used_fallback INTEGER NOT NULL DEFAULT 0,
+				sample_count  INTEGER NOT NULL DEFAULT 0,
+				sum_ratio     REAL    NOT NULL DEFAULT 0.0,
+				sum_sq_ratio  REAL    NOT NULL DEFAULT 0.0,
+				PRIMARY KEY (codec_name, used_fallback)
+			)
+		)");
 	}
 
 	// One-time migration: reset 'no_poster' records to 'pending' so that newly
@@ -905,6 +928,7 @@ std::optional<JobRecord> DatabaseManager::activeJobForFile(qint64 fileId) const
 	j.originalStreamsJson    = q.value("original_streams_json").toString();
 	j.flagChangesJson        = q.value("flag_changes_json").toString();
 	j.sidecarDeletionsJson   = q.value("sidecar_deletions_json").toString();
+	j.streamEstimatesJson    = q.value("stream_estimates_json").toString();
 	return j;
 }
 
@@ -914,8 +938,9 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.prepare(R"(
 		INSERT INTO jobs(file_id, status, job_type, command_args_json,
 						 summary, dry_run, created_at, description_text, original_streams_json,
-						 saved_bytes, estimated_saved_bytes, flag_changes_json, sidecar_deletions_json)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+						 saved_bytes, estimated_saved_bytes, flag_changes_json, sidecar_deletions_json,
+						 stream_estimates_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 	q.addBindValue(job.fileId > 0 ? QVariant(job.fileId) : QVariant());
 	q.addBindValue(job.status.isEmpty() ? "proposed" : job.status);
@@ -927,9 +952,10 @@ qint64 DatabaseManager::insertJob(const JobRecord& job)
 	q.addBindValue(job.descriptionText);
 	q.addBindValue(job.originalStreamsJson);
 	q.addBindValue(job.savedBytes);           // estimate at creation; overwritten on completion
-	q.addBindValue(job.estimatedSavedBytes); // frozen at creation, never overwritten
+	q.addBindValue(job.estimatedSavedBytes);  // frozen at creation, never overwritten
 	q.addBindValue(job.flagChangesJson);
 	q.addBindValue(job.sidecarDeletionsJson);
+	q.addBindValue(job.streamEstimatesJson);
 	if (!q.exec()) {
 		qWarning() << "insertJob failed:" << q.lastError().text();
 		return -1;
@@ -978,6 +1004,83 @@ bool DatabaseManager::updateJobSavedBytes(qint64 jobId, qint64 savedBytes)
 	q.addBindValue(savedBytes);
 	q.addBindValue(jobId);
 	return q.exec();
+}
+
+void DatabaseManager::updateCalibrationFromJob(qint64 jobId)
+{
+	const auto jobOpt = jobById(jobId);
+	if (!jobOpt) return;
+	const JobRecord& job = *jobOpt;
+	if (job.savedBytes <= 0 || job.estimatedSavedBytes <= 0) return;
+	if (job.streamEstimatesJson.isEmpty()) return;
+
+	const QJsonArray tracks = QJsonDocument::fromJson(job.streamEstimatesJson.toUtf8()).array();
+	if (tracks.isEmpty()) return;
+
+	// One accuracy ratio per job, applied to every track removed in that job.
+	// For multi-track jobs this is an approximation; single-track jobs give an
+	// exact signal. Over many jobs the average converges per codec family.
+	const double ratio = static_cast<double>(job.savedBytes)
+	                   / static_cast<double>(job.estimatedSavedBytes);
+
+	QSqlQuery q(connection());
+	q.prepare(R"(
+		INSERT INTO codec_calibration(codec_name, codec_type, used_fallback,
+		                              sample_count, sum_ratio, sum_sq_ratio)
+		VALUES(?, ?, ?, 1, ?, ?)
+		ON CONFLICT(codec_name, used_fallback) DO UPDATE SET
+			sample_count = sample_count + 1,
+			sum_ratio    = sum_ratio    + excluded.sum_ratio,
+			sum_sq_ratio = sum_sq_ratio + excluded.sum_sq_ratio
+	)");
+
+	for (const QJsonValue& v : tracks) {
+		const QJsonObject obj   = v.toObject();
+		const QString codecName = obj[QStringLiteral("codecName")].toString();
+		const QString codecType = obj[QStringLiteral("codecType")].toString();
+		const int usedFallback  = obj[QStringLiteral("declaredBitrate")].toVariant().toLongLong() == 0 ? 1 : 0;
+		q.addBindValue(codecName);
+		q.addBindValue(codecType);
+		q.addBindValue(usedFallback);
+		q.addBindValue(ratio);
+		q.addBindValue(ratio * ratio);
+		if (!q.exec())
+			qWarning() << "updateCalibrationFromJob failed:" << q.lastError().text();
+	}
+}
+
+QList<Mc::CalibrationEntry> DatabaseManager::calibrationReport() const
+{
+	QList<Mc::CalibrationEntry> result;
+	QSqlQuery q(connection());
+	q.exec(R"(
+		SELECT codec_name, codec_type, used_fallback, sample_count,
+		       sum_ratio / sample_count AS avg_ratio,
+		       CASE WHEN sample_count > 1
+		            THEN SQRT(MAX(0.0,
+		                 sum_sq_ratio / sample_count
+		                 - (sum_ratio / sample_count) * (sum_ratio / sample_count)))
+		            ELSE 0.0 END AS std_dev_ratio
+		FROM codec_calibration
+		ORDER BY codec_type, codec_name, used_fallback
+	)");
+	while (q.next()) {
+		Mc::CalibrationEntry e;
+		e.codecName    = q.value("codec_name").toString();
+		e.codecType    = q.value("codec_type").toString();
+		e.usedFallback = q.value("used_fallback").toInt() != 0;
+		e.sampleCount  = q.value("sample_count").toInt();
+		e.avgRatio     = q.value("avg_ratio").toDouble();
+		e.stdDevRatio  = q.value("std_dev_ratio").toDouble();
+		result.append(e);
+	}
+	return result;
+}
+
+void DatabaseManager::clearCalibration()
+{
+	QSqlQuery q(connection());
+	q.exec("DELETE FROM codec_calibration");
 }
 
 bool DatabaseManager::updateJobType(qint64 jobId, const QString& jobType)
@@ -1204,6 +1307,7 @@ QList<JobRecord> DatabaseManager::allJobs() const
 		j.originalStreamsJson   = q.value("original_streams_json").toString();
 		j.flagChangesJson       = q.value("flag_changes_json").toString();
 		j.sidecarDeletionsJson  = q.value("sidecar_deletions_json").toString();
+		j.streamEstimatesJson   = q.value("stream_estimates_json").toString();
 		result.append(j);
 	}
 	return result;
@@ -1234,6 +1338,7 @@ std::optional<JobRecord> DatabaseManager::jobById(qint64 jobId) const
 	j.originalStreamsJson    = q.value("original_streams_json").toString();
 	j.flagChangesJson        = q.value("flag_changes_json").toString();
 	j.sidecarDeletionsJson   = q.value("sidecar_deletions_json").toString();
+	j.streamEstimatesJson    = q.value("stream_estimates_json").toString();
 	return j;
 }
 

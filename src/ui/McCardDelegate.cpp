@@ -1142,7 +1142,8 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 
 			const bool isPending = (d.status == QLatin1String("proposed")
 			                     || d.status == QLatin1String("queued")
-			                     || d.status == QLatin1String("source"));
+			                     || d.status == QLatin1String("source")
+			                     || d.status == QLatin1String("running"));
 			qint64 displaySavedBytes = (isPending && d.sizeBytes > 0)
 				? estimateSavingBytes(d.allStreams, d.removedIndices, d.sizeBytes, d.durationSec)
 				: d.savedBytes;

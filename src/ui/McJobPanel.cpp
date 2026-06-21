@@ -8,6 +8,7 @@
 #include "ui/SvgIcon.h"
 #include "engine/ActionEngine.h"
 #include "engine/JobQueue.h"
+#include "engine/TrackDecision.h"
 #include "engine/PosterManager.h"
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
@@ -44,6 +45,8 @@
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSettings>
+#include <QSplitter>
 #include <QSet>
 #include <QStandardItemModel>
 #include <QStyledItemDelegate>
@@ -834,58 +837,169 @@ void McJobPanel::setupUi()
 				infoLabel->setTextFormat(Qt::RichText);
 				vlay->addWidget(infoLabel);
 
-				// Savings row — shown whenever at least one value is known
-				const bool showSavings = rec->savedBytes > 0 || rec->estimatedSavedBytes > 0;
-				if (showSavings) {
-					const auto fmtMB = [](qint64 b) {
-						return QStringLiteral("%1 MB").arg(b / 1048576.0, 0, 'f', 2);
-					};
-					const QString estStr = rec->estimatedSavedBytes > 0
-					    ? QStringLiteral("~%1").arg(fmtMB(rec->estimatedSavedBytes))
-					    : tr("—");
-					const QString actStr = rec->savedBytes > 0
-					    ? fmtMB(rec->savedBytes)
-					    : tr("—");
+				// ── Savings + per-track breakdown ────────────────────────────
+				// Load file now — need both size and duration
+				qint64 fileSizeBytes = 0;
+				double durationSec   = 0.0;
+				if (const auto f = DatabaseManager::instance().fileById(rec->fileId)) {
+					fileSizeBytes = f->sizeBytes;
+					durationSec   = f->durationSec;
+				}
 
+				const auto fmtMB = [](qint64 b) {
+					return QStringLiteral("%1 MB").arg(b / 1048576.0, 0, 'f', 2);
+				};
+				const auto fmtWithPct = [&](qint64 b, const QString& prefix) -> QString {
+					if (fileSizeBytes <= 0) return prefix + fmtMB(b);
+					return QStringLiteral("%1%2 (%3%)").arg(prefix, fmtMB(b))
+					           .arg(100.0 * b / fileSizeBytes, 0, 'f', 1);
+				};
+
+				// Recompute estimate from current fallbacks using stored JSON.
+				// The value stored in estimatedSavedBytes reflects fallbacks at job-creation
+				// time and may be stale if defaults were tuned since then.
+				const QJsonArray estArr = QJsonDocument::fromJson(
+				    rec->streamEstimatesJson.toUtf8()).array();
+
+				struct TrackGroup {
+					int    count      = 0;
+					qint64 totalBytes = 0;
+					bool   declared   = false;
+				};
+				QMap<QString, TrackGroup> groups; // key: "codecType|codecName|D/F"
+				qint64 freshEstimate = 0;
+
+				for (const QJsonValue& v : estArr) {
+					const QJsonObject o = v.toObject();
+					const QString codecType    = o[QStringLiteral("codecType")].toString();
+					const QString codecName    = o[QStringLiteral("codecName")].toString();
+					const QString codecProfile = o[QStringLiteral("codecProfile")].toString();
+					const int     channels     = o[QStringLiteral("channels")].toInt();
+					const int     sampleRate   = o[QStringLiteral("sampleRate")].toInt();
+					const qint64  declared     = o[QStringLiteral("declaredBitrate")].toVariant().toLongLong();
+
+					qint64 trackBytes = 0;
+					if (declared > 0 && durationSec > 0) {
+						trackBytes = static_cast<qint64>(static_cast<double>(declared) * durationSec / 8.0);
+					} else if (durationSec > 0) {
+						Mc::StreamRecord tmp;
+						tmp.codecType    = codecType;
+						tmp.codecName    = codecName;
+						tmp.codecProfile = codecProfile;
+						tmp.channels     = channels;
+						tmp.sampleRate   = sampleRate;
+						trackBytes = static_cast<qint64>(Mc::effectiveBitrate(tmp) * durationSec / 8.0);
+					} else {
+						// No duration: fall back to whatever was stored
+						trackBytes = o[QStringLiteral("estimatedBytes")].toVariant().toLongLong();
+					}
+					freshEstimate += trackBytes;
+
+					const QString label = codecName.isEmpty() ? codecType : codecName;
+					const QString key   = codecType + QChar('|') + label
+					                    + QChar('|') + (declared > 0 ? QChar('D') : QChar('F'));
+					auto& g = groups[key];
+					g.count++;
+					g.totalBytes += trackBytes;
+					g.declared = declared > 0;
+				}
+
+				const qint64 displayEst = !estArr.isEmpty() ? freshEstimate
+				                                             : rec->estimatedSavedBytes;
+				const bool showSavings  = rec->savedBytes > 0 || displayEst > 0;
+				QPlainTextEdit* detailEdit = nullptr;
+				if (showSavings) {
 					auto* savingsLabel = new QLabel(dlg);
 					savingsLabel->setTextFormat(Qt::RichText);
 
-					if (rec->savedBytes > 0 && rec->estimatedSavedBytes > 0) {
-						const qint64 diff     = rec->savedBytes - rec->estimatedSavedBytes;
-						const double pctDiff  = 100.0 * diff / rec->estimatedSavedBytes;
-						const QString sign    = diff >= 0 ? QStringLiteral("+") : QString();
-						const QString color   = qAbs(diff) < 1048576 ? QStringLiteral("green")
-						                      : diff > 0              ? QStringLiteral("darkorange")
-						                      :                         QStringLiteral("crimson");
-						const QString actWithPct = QStringLiteral("%1 <span style='color:%2'>(%3%4%)</span>")
-						    .arg(actStr, color, sign)
-						    .arg(pctDiff, 0, 'f', 1);
+					if (rec->savedBytes > 0 && displayEst > 0) {
+						const qint64  diff  = rec->savedBytes - displayEst;
+						const QString sign  = diff >= 0 ? QStringLiteral("+") : QStringLiteral("-");
+						const QString color = qAbs(diff) < 1048576 ? QStringLiteral("green")
+						                   : diff > 0              ? QStringLiteral("darkorange")
+						                   :                         QStringLiteral("crimson");
 						savingsLabel->setText(
 							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>  |  Delta: <b><span style='color:%3'>%4%5</span></b>")
-							.arg(estStr, actWithPct, color, sign)
-							.arg(fmtMB(qAbs(diff))));
+							.arg(fmtWithPct(displayEst, QStringLiteral("~")),
+							     fmtWithPct(rec->savedBytes, QString()),
+							     color, sign, fmtMB(qAbs(diff))));
 					} else {
 						savingsLabel->setText(
 							tr("Estimated: <b>%1</b>  |  Actual: <b>%2</b>")
-							.arg(estStr, actStr));
+							.arg(displayEst > 0 ? fmtWithPct(displayEst, QStringLiteral("~")) : tr("—"),
+							     rec->savedBytes > 0 ? fmtWithPct(rec->savedBytes, QString()) : tr("—")));
 					}
 					vlay->addWidget(savingsLabel);
+
+					// Per-track grouped breakdown
+					if (!groups.isEmpty()) {
+						QStringList lines;
+						lines.reserve(groups.size() + 2);
+						lines << tr("Per-track estimates (current fallbacks):");
+						for (auto it = groups.cbegin(); it != groups.cend(); ++it) {
+							const auto& g = it.value();
+							const QString label  = it.key().section(QChar('|'), 1, 1);
+							const QString source = g.declared ? tr("declared") : tr("fallback");
+							const QString cnt    = g.count > 1
+							    ? QStringLiteral("%1 × ").arg(g.count) : QString();
+							lines << QStringLiteral("  %1%2  (%3)  →  ~%4 MB")
+							         .arg(cnt, label, source)
+							         .arg(g.totalBytes / 1048576.0, 0, 'f', 1);
+						}
+						lines << QStringLiteral("  Total:  ~%1 MB")
+						         .arg(freshEstimate / 1048576.0, 0, 'f', 1);
+
+						detailEdit = new QPlainTextEdit(lines.join(QLatin1Char('\n')));
+						detailEdit->setReadOnly(true);
+						detailEdit->setFont(QFont(QStringLiteral("Courier New"), 9));
+						detailEdit->setWordWrapMode(QTextOption::NoWrap);
+					}
 				}
 
-				auto* logEdit = new QPlainTextEdit(dlg);
+				// Splitter — detail pane (when present) sits above the mkvmerge log
+				auto* splitter = new QSplitter(Qt::Vertical, dlg);
+				if (detailEdit)
+					splitter->addWidget(detailEdit);
+
+				auto* logEdit = new QPlainTextEdit(splitter);
 				logEdit->setReadOnly(true);
 				logEdit->setFont(QFont(QStringLiteral("Courier New"), 9));
 				logEdit->setWordWrapMode(QTextOption::NoWrap);
 				logEdit->setPlainText(rec->outputLog.isEmpty()
 					? tr("(no output captured)")
 					: rec->outputLog);
-				vlay->addWidget(logEdit);
+				splitter->addWidget(logEdit);
+
+				if (detailEdit) {
+					const int lineH   = QFontMetrics(detailEdit->font()).height() + 4;
+					const int detailH = lineH * (detailEdit->document()->blockCount() + 1);
+					splitter->setSizes({ detailH, 300 });
+				}
+				vlay->addWidget(splitter);
+
+				// Persist geometry and splitter ratio across sessions
+				{
+					QSettings s;
+					if (const QByteArray g = s.value(QStringLiteral("jobLogDialog/geometry")).toByteArray(); !g.isEmpty())
+						dlg->restoreGeometry(g);
+					if (const QByteArray sp = s.value(QStringLiteral("jobLogDialog/splitter")).toByteArray(); !sp.isEmpty())
+						splitter->restoreState(sp);
+				}
+				connect(dlg, &QDialog::finished, dlg, [dlg, splitter] {
+					QSettings s;
+					s.setValue(QStringLiteral("jobLogDialog/geometry"), dlg->saveGeometry());
+					s.setValue(QStringLiteral("jobLogDialog/splitter"), splitter->saveState());
+				});
 
 				auto* btnBox = new QDialogButtonBox(dlg);
 				auto* copyBtn = btnBox->addButton(tr("Copy to Clipboard"), QDialogButtonBox::ActionRole);
 				btnBox->addButton(QDialogButtonBox::Close);
-				connect(copyBtn, &QPushButton::clicked, this, [logEdit] {
-					QApplication::clipboard()->setText(logEdit->toPlainText());
+				connect(copyBtn, &QPushButton::clicked, this, [detailEdit, logEdit] {
+					QString text;
+					if (detailEdit && !detailEdit->toPlainText().isEmpty())
+						text = detailEdit->toPlainText() + QStringLiteral("\n\n");
+					text += logEdit->toPlainText();
+					QApplication::clipboard()->setText(text);
 				});
 				connect(btnBox, &QDialogButtonBox::rejected, dlg, &QDialog::accept);
 				vlay->addWidget(btnBox);

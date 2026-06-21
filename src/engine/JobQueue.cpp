@@ -446,6 +446,7 @@ void JobQueue::onJobFinished(int exitCode, const QString& log, qint64 savedBytes
 	db.updateJobStatus(jobId, ok ? "done" : "failed", exitCode, log);
 	if (ok && savedBytes > 0) {
 		db.updateJobSavedBytes(jobId, savedBytes);
+		db.updateCalibrationFromJob(jobId);
 		auto& settings = AppSettings::instance();
 		const qint64 prev = settings.value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
 		settings.setValue(QStringLiteral("stats/totalReclaimedBytes"), prev + savedBytes);
@@ -547,6 +548,7 @@ void JobQueue::commitReview(qint64 jobId)
 	db.updateJobStatus(jobId, "done", exitCode);
 	if (savedBytes > 0) {
 		db.updateJobSavedBytes(jobId, savedBytes);
+		db.updateCalibrationFromJob(jobId);
 		auto& settings = AppSettings::instance();
 		const qint64 prev = settings.value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
 		settings.setValue(QStringLiteral("stats/totalReclaimedBytes"), prev + savedBytes);
