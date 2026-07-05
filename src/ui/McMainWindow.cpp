@@ -1867,14 +1867,19 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 		db.deleteJob(existingJob->id);
 	}
 
+	const qint64 estimatedSavings = decision.estimatedSavingBytes();
+
 	JobRecord job;
-	job.fileId          = f.id;
-	job.status          = "proposed";
-	job.jobType         = "remux";
-	job.commandArgsJson = QJsonDocument(arr).toJson(QJsonDocument::Compact);
-	job.summary         = summary;
-	job.descriptionText = descriptionText;
-	job.flagChangesJson = inheritedFlagChanges;
+	job.fileId              = f.id;
+	job.status              = "proposed";
+	job.jobType             = "remux";
+	job.commandArgsJson     = QJsonDocument(arr).toJson(QJsonDocument::Compact);
+	job.summary             = summary;
+	job.descriptionText     = descriptionText;
+	job.savedBytes          = estimatedSavings;
+	job.estimatedSavedBytes = estimatedSavings;
+	job.streamEstimatesJson = decision.streamEstimatesJson();
+	job.flagChangesJson     = inheritedFlagChanges;
 	(void)db.insertJob(job);
 	return true;
 }

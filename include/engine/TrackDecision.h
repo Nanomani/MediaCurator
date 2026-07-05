@@ -72,27 +72,40 @@ inline double effectiveBitrate(const StreamRecord& s) noexcept
 	return 0.0;
 }
 
-// Returns a stable identifier for which FallbackBps constant effectiveBitrate() would
-// pick for this codec — the grouping key for calibration samples. codecName alone is
-// NOT enough to key on: ffprobe reports codec_name "dts" for both plain DTS and
-// DTS-HD MA/HRA, which resolve to very different fallback constants above via
-// codecProfile. Must be kept in sync with effectiveBitrate()'s branching. Empty means
-// no fallback bucket applies (e.g. video, or anything with a declared bitrate).
-inline QString fallbackBpsKey(const QString& codecName, const QString& codecType,
-                               const QString& codecProfile)
+// Fine-grained format identity for calibration — one entry per actual codec, so the
+// calibration report can show a row per real format (AC3, AAC, DTS, DTS-HD MA, ...)
+// instead of pre-collapsing several formats into one bucket. codecName alone very
+// nearly works, except ffprobe reports the same codec_name "dts" for both plain DTS
+// and DTS-HD MA/HRA — codecProfile is what actually tells them apart, so that's the
+// one case needing a suffix. Empty means no fallback ever applies (e.g. video).
+inline QString calibrationFormatKey(const QString& codecName, const QString& codecType,
+                                     const QString& codecProfile)
+{
+	if (codecType != QLatin1String("audio") && codecType != QLatin1String("subtitle"))
+		return {};
+	QString key = codecName.toLower();
+	if (codecType == QLatin1String("audio")
+	        && codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
+		key += QStringLiteral("-hd");
+	return key;
+}
+
+// Several calibrationFormatKey() formats can share one FallbackBps constant (e.g. ac3,
+// aac, mp3, and plain dts all use the generic kAudio fallback) — this is the coarser
+// level a suggested correction is actually actionable at, since there's only one
+// constant in code to change. Must be kept in sync with effectiveBitrate()'s branching.
+inline QString fallbackBpsKey(const QString& formatKey, const QString& codecType)
 {
 	if (codecType == QLatin1String("audio")) {
-		if (codecProfile.contains(QLatin1String("DTS-HD"), Qt::CaseInsensitive))
-			return QStringLiteral("dts-hd");
-		const QString cn = codecName.toLower();
-		if (cn == QLatin1String("truehd"))        return QStringLiteral("truehd");
-		if (cn.startsWith(QLatin1String("pcm_"))) return QStringLiteral("pcm");
-		if (cn == QLatin1String("flac"))          return QStringLiteral("flac");
+		if (formatKey.endsWith(QLatin1String("-hd")))    return QStringLiteral("dts-hd");
+		if (formatKey == QLatin1String("truehd"))        return QStringLiteral("truehd");
+		if (formatKey.startsWith(QLatin1String("pcm_"))) return QStringLiteral("pcm");
+		if (formatKey == QLatin1String("flac"))          return QStringLiteral("flac");
 		return QStringLiteral("audio-lossy");
 	}
 	if (codecType == QLatin1String("subtitle")) {
-		const bool isImageSub = codecName.contains(QLatin1String("pgs"))
-		                     || codecName == QLatin1String("dvd_subtitle");
+		const bool isImageSub = formatKey.contains(QLatin1String("pgs"))
+		                     || formatKey == QLatin1String("dvd_subtitle");
 		return isImageSub ? QStringLiteral("image-subtitle") : QStringLiteral("text-subtitle");
 	}
 	return {};

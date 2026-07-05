@@ -1042,13 +1042,15 @@ void DatabaseManager::updateCalibrationFromJob(qint64 jobId)
 		const QString codecProfile = obj[QStringLiteral("codecProfile")].toString();
 		const int usedFallback     = obj[QStringLiteral("declaredBitrate")].toVariant().toLongLong() == 0 ? 1 : 0;
 
-		// Group by which FallbackBps bucket this track actually used, not raw codec
-		// name — ffprobe reports the same codec_name ("dts") for both plain DTS and
-		// DTS-HD MA/HRA, which use very different fallback constants (codecProfile is
-		// what actually distinguishes them). Using the raw name here would silently
-		// blend two unrelated fallback buckets into one calibration average.
-		const QString key = Mc::fallbackBpsKey(codecName, codecType, codecProfile);
-		if (key.isEmpty()) continue;   // e.g. video, or a type with no fallback bucket
+		// Group by exact format (AC3, AAC, DTS, DTS-HD MA, ...), not just codec_name —
+		// ffprobe reports the same codec_name ("dts") for both plain DTS and DTS-HD
+		// MA/HRA, which use very different fallback constants (codecProfile is what
+		// actually distinguishes them). One row per real format keeps the calibration
+		// report readable and each format's accuracy independently visible; the shared
+		// FallbackBps constant they may resolve to is only relevant when suggesting
+		// an actual code change (see fallbackBpsKey()), not for storage/display here.
+		const QString key = Mc::calibrationFormatKey(codecName, codecType, codecProfile);
+		if (key.isEmpty()) continue;   // e.g. video — no fallback ever applies
 
 		q.addBindValue(key);
 		q.addBindValue(codecType);

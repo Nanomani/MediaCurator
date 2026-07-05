@@ -15,13 +15,43 @@
 
 namespace Mc {
 
-// currentFallbackBps()/fallbackConstName() used to re-derive the fallback bucket from
-// (codecName, codecType) alone, without codecProfile — which meant DTS and DTS-HD MA/HRA
-// (same ffprobe codec_name "dts", very different fallback constants) were indistinguishable
-// here. calibrationReport() now returns entries already keyed by Mc::fallbackBpsKey(), the
-// same stable bucket identifier updateCalibrationFromJob() stores by, so both the value and
-// constexpr-name lookups below just resolve that key directly via the shared TrackDecision.h
-// functions — one source of truth instead of two hand-maintained copies of the same mapping.
+// calibrationReport() returns one row per exact format (Mc::calibrationFormatKey() —
+// e.g. "ac3", "aac", "dts", "dts-hd", "truehd") rather than pre-grouped by fallback
+// constant, so every format's accuracy is independently visible. Several formats can
+// still share one FallbackBps constant in code (ac3/aac/mp3/dts all use the generic
+// kAudio fallback) — Mc::fallbackBpsKey() resolves *that* coarser bucket, used only
+// when computing/suggesting the constant a row's format would actually update.
+
+// Human-friendly label for a calibrationFormatKey(), shown in the "Format" column —
+// e.g. "DTS-HD MA / HRA" instead of the raw key "dts-hd".
+static QString friendlyFormatLabel(const QString& key)
+{
+	static const QHash<QString, QString> names = {
+		{QStringLiteral("ac3"),                QStringLiteral("Dolby Digital (AC3)")},
+		{QStringLiteral("eac3"),               QStringLiteral("Dolby Digital Plus (E-AC3)")},
+		{QStringLiteral("aac"),                QStringLiteral("AAC")},
+		{QStringLiteral("mp3"),                QStringLiteral("MP3")},
+		{QStringLiteral("mp2"),                QStringLiteral("MP2")},
+		{QStringLiteral("opus"),               QStringLiteral("Opus")},
+		{QStringLiteral("vorbis"),             QStringLiteral("Vorbis")},
+		{QStringLiteral("dts"),                QStringLiteral("DTS")},
+		{QStringLiteral("dts-hd"),             QStringLiteral("DTS-HD MA / HRA")},
+		{QStringLiteral("truehd"),             QStringLiteral("TrueHD / Atmos")},
+		{QStringLiteral("flac"),               QStringLiteral("FLAC")},
+		{QStringLiteral("hdmv_pgs_subtitle"),  QStringLiteral("PGS")},
+		{QStringLiteral("dvd_subtitle"),       QStringLiteral("VobSub")},
+		{QStringLiteral("subrip"),             QStringLiteral("SRT")},
+		{QStringLiteral("ass"),                QStringLiteral("ASS/SSA")},
+		{QStringLiteral("ssa"),                QStringLiteral("ASS/SSA")},
+		{QStringLiteral("webvtt"),             QStringLiteral("WebVTT")},
+		{QStringLiteral("mov_text"),           QStringLiteral("MP4 Timed Text")},
+	};
+	if (const auto it = names.constFind(key); it != names.constEnd())
+		return it.value();
+	if (key.startsWith(QLatin1String("pcm_")))
+		return QStringLiteral("PCM (%1)").arg(key.mid(4).toUpper());
+	return key;   // unmapped/new format — show the raw key rather than nothing
+}
 
 // Format a bps integer with C++ digit separators: 3500000 -> "3'500'000"
 static QString fmtBps(qint64 bps)
@@ -42,7 +72,7 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 	auto* vlay = new QVBoxLayout(this);
 
 	auto* info = new QLabel(
-		tr("<b>How to read this:</b> Each row shows the average accuracy ratio for a codec "
+		tr("<b>How to read this:</b> Each row shows the average accuracy ratio for a format "
 		   "across completed jobs. A ratio of 1.0 = perfect estimate; &lt; 1.0 = over-estimated. "
 		   "Fallback rows are worth tuning — click <b>Copy Suggested Code</b> to get ready-to-paste "
 		   "<code>constexpr</code> lines for the <code>FallbackBps</code> namespace in "
@@ -58,7 +88,7 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 
 	auto* table = new QTableWidget(entries.size(), 7, this);
 	table->setHorizontalHeaderLabels({
-		tr("Codec"), tr("Type"), tr("Bitrate Source"), tr("Samples"),
+		tr("Format"), tr("Type"), tr("Bitrate Source"), tr("Samples"),
 		tr("Avg Ratio"), tr("Std Dev"), tr("Suggested Fallback")
 	});
 	table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -73,7 +103,8 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 
 	for (int row = 0; row < entries.size(); ++row) {
 		const CalibrationEntry& e = entries[row];
-		const qint64 fallback     = static_cast<qint64>(fallbackBpsForKey(e.codecName));
+		const qint64 fallback     = static_cast<qint64>(
+		    fallbackBpsForKey(fallbackBpsKey(e.codecName, e.codecType)));
 		const bool confident      = e.sampleCount >= MIN_SAMPLES
 		                         && e.stdDevRatio / qMax(e.avgRatio, 0.01) < 0.4;
 		const bool worthChanging  = qAbs(e.avgRatio - 1.0) >= MIN_DRIFT;
@@ -90,7 +121,7 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 			table->setItem(row, col, item);
 		};
 
-		cell(0, e.codecName);
+		cell(0, friendlyFormatLabel(e.codecName));
 		cell(1, e.codecType);
 		cell(2, e.usedFallback ? tr("fallback") : tr("declared"));
 		cell(3, QString::number(e.sampleCount));
@@ -152,7 +183,8 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 		QStringList lines;
 		lines << QStringLiteral("codec_name,codec_type,bitrate_source,sample_count,avg_ratio,std_dev_ratio,suggested_fallback_bps");
 		for (const CalibrationEntry& e : entries) {
-			const qint64 fallback  = static_cast<qint64>(fallbackBpsForKey(e.codecName));
+			const qint64 fallback  = static_cast<qint64>(
+			    fallbackBpsForKey(fallbackBpsKey(e.codecName, e.codecType)));
 			const qint64 suggested = (e.usedFallback && fallback > 0)
 			    ? qRound64(fallback * e.avgRatio / 1000.0) * 1000 : 0;
 			lines << QStringLiteral("%1,%2,%3,%4,%5,%6,%7")
@@ -177,7 +209,8 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 		// summary comment lines
 		for (const CalibrationEntry& e : entries) {
 			if (!e.usedFallback) continue;
-			const qint64 fallback = static_cast<qint64>(fallbackBpsForKey(e.codecName));
+			const qint64 fallback = static_cast<qint64>(
+			    fallbackBpsForKey(fallbackBpsKey(e.codecName, e.codecType)));
 			if (fallback <= 0) continue;
 			const qint64 suggested = qRound64(fallback * e.avgRatio / 1000.0) * 1000;
 			const bool confident   = e.sampleCount >= MIN_S
@@ -204,13 +237,14 @@ McCalibrationDialog::McCalibrationDialog(QWidget* parent)
 		QMap<QString, QPair<qint64, int>> best; // constName -> (suggestedBps, sampleCount)
 		for (const CalibrationEntry& e : entries) {
 			if (!e.usedFallback) continue;
-			const qint64 fallback = static_cast<qint64>(fallbackBpsForKey(e.codecName));
+			const QString bucket  = fallbackBpsKey(e.codecName, e.codecType);
+			const qint64 fallback = static_cast<qint64>(fallbackBpsForKey(bucket));
 			if (fallback <= 0) continue;
 			const bool confident  = e.sampleCount >= MIN_S
 			                     && e.stdDevRatio / qMax(e.avgRatio, 0.01) < 0.4;
 			const bool drift      = qAbs(e.avgRatio - 1.0) >= MIN_D;
 			if (!confident || !drift) continue;
-			const QString cname   = fallbackBpsConstName(e.codecName);
+			const QString cname   = fallbackBpsConstName(bucket);
 			if (cname.isEmpty()) continue;
 			const qint64 suggested = qRound64(fallback * e.avgRatio / 1000.0) * 1000;
 			if (!best.contains(cname) || e.sampleCount > best[cname].second)
