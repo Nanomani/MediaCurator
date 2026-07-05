@@ -713,7 +713,13 @@ void McJobPanel::setupUi()
 								const QString newPath = ActionEngine::insertLanguageIntoSidecarPath(
 									streamCopy.externalPath, videoBaseName, code);
 								if (!QFile::rename(streamCopy.externalPath, newPath)) return;
-								if (m_queue) m_queue->requestRescan(fileId);
+								// Patch the DB row directly instead of a full rescan — a rescan
+								// unconditionally deletes any proposed/queued job for this file
+								// (JobQueue::rescanFile), which would destroy the very job
+								// whose badge we're trying to update.
+								DatabaseManager::instance().updateStreamExternalInfo(
+									fileId, streamCopy.streamIndex, code, newPath);
+								m_model->updateExternalStreamInfo(fileId, streamCopy.streamIndex, code, newPath);
 							} else {
 								m_model->setStreamLanguage(idx, streamCopy.streamIndex, code);
 							}
@@ -1299,6 +1305,12 @@ void McJobPanel::scrollToFileJob(qint64 fileId)
 			break;
 		}
 	}
+}
+
+void McJobPanel::syncExternalStreamLanguage(qint64 fileId, int streamIndex,
+                                             const QString& language, const QString& externalPath)
+{
+	m_model->updateExternalStreamInfo(fileId, streamIndex, language, externalPath);
 }
 
 void McJobPanel::onJobStatusChanged(qint64 jobId, const QString& status)

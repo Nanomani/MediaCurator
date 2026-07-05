@@ -81,6 +81,14 @@ public:
 	// by mkvpropedit/mkvmerge when the job actually runs.
 	void setStreamLanguage(const QModelIndex& index, int streamIndex, const QString& langCode);
 
+	// Updates the in-memory language/path of an external sidecar stream after it was
+	// renamed on disk and the corresponding DB row already updated directly (see
+	// DatabaseManager::updateStreamExternalInfo). No flag_changes_json entry is written —
+	// the change is already fully applied, not pending. Looked up by fileId since the
+	// caller (e.g. the Library view) may not hold a QModelIndex into this model.
+	void updateExternalStreamInfo(qint64 fileId, int streamIndex,
+	                               const QString& language, const QString& externalPath);
+
 	static QList<StreamRecord> computeKeptStreams(
 	    const QList<StreamRecord>& all,
 	    const QString& commandArgsJson);

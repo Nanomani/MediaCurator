@@ -1942,7 +1942,15 @@ void McMainWindow::setSubtitleLanguage(const FileRecord& file, const StreamRecor
 				.arg(QFileInfo(stream.externalPath).fileName()));
 			return;
 		}
-		m_jobQueue->requestRescan(file.id);
+		// Patch just this one stream row directly rather than doing a full ffprobe
+		// rescan — a rescan unconditionally deletes any proposed/queued job for this
+		// file (JobQueue::rescanFile), which would destroy the very job we might be
+		// trying to update via syncExternalStreamLanguage below.
+		db.updateStreamExternalInfo(file.id, stream.streamIndex, langCode, newPath);
+		m_listModel->reloadFile(file.id);
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			d->invalidateSizeCacheFor(file.id);
+		m_jobPanel->syncExternalStreamLanguage(file.id, stream.streamIndex, langCode, newPath);
 		m_statusLabel->setText(tr("Set subtitle language to %1 for %2")
 			.arg(McLanguageFlags::displayName(langCode), file.filename));
 		return;

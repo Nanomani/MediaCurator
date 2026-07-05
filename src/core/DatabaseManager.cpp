@@ -771,6 +771,18 @@ bool DatabaseManager::deleteStreamsForFile(qint64 fileId)
 	return q.exec();
 }
 
+bool DatabaseManager::updateStreamExternalInfo(qint64 fileId, int streamIndex,
+                                                const QString& language, const QString& externalPath)
+{
+	QSqlQuery q(connection());
+	q.prepare("UPDATE streams SET language=?, external_path=? WHERE file_id=? AND stream_index=?");
+	q.addBindValue(language);
+	q.addBindValue(externalPath);
+	q.addBindValue(fileId);
+	q.addBindValue(streamIndex);
+	return q.exec();
+}
+
 QList<StreamRecord> DatabaseManager::streamsForFile(qint64 fileId) const
 {
 	QList<StreamRecord> result;

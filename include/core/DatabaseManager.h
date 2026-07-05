@@ -184,6 +184,11 @@ public:
 	// ── Streams ──────────────────────────────────────────────────────────────
 	bool insertStreams(qint64 fileId, const QList<StreamRecord>& streams);
 	bool deleteStreamsForFile(qint64 fileId);
+	// Updates just the language + path of one external sidecar stream (e.g. after
+	// renaming it to include a language token). Unlike a full rescan, this touches
+	// only this one row — it never invalidates any pending job for the file.
+	bool updateStreamExternalInfo(qint64 fileId, int streamIndex,
+	                               const QString& language, const QString& externalPath);
 	QList<StreamRecord> streamsForFile(qint64 fileId) const;
 	QList<StreamRecord> allStreams() const;
 	QHash<qint64, QList<StreamRecord>> allStreamsGrouped() const;

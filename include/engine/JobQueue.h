@@ -29,12 +29,6 @@ public:
 	// isRunning() stays true while paused-with-queued-jobs, which is not "running".
 	bool hasActiveJob() const { return m_currentJob != nullptr; }
 
-	// Re-scans a single file from disk and updates its streams in the DB — e.g. after
-	// the user (or an external tool) renamed a sidecar subtitle file. Reuses the same
-	// path run internally after a job completes, which already "picks up renamed
-	// sidecars automatically".
-	void requestRescan(qint64 fileId) { rescanFile(fileId, QString()); }
-
 signals:
 	void jobStarted(qint64 jobId);
 	void jobFinished(qint64 jobId, bool success, qint64 savedBytes);

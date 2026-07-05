@@ -860,6 +860,28 @@ void McJobListModel::setStreamLanguage(const QModelIndex& index, int streamIndex
 	emit dataChanged(index, index, { AllStreamsRole, KeptStreamsRole, FlagChangesRole });
 }
 
+void McJobListModel::updateExternalStreamInfo(qint64 fileId, int streamIndex,
+                                               const QString& language, const QString& externalPath)
+{
+	auto apply = [&](StreamRecord& s) {
+		if (s.streamIndex != streamIndex) return;
+		s.language     = language;
+		s.externalPath = externalPath;
+	};
+	for (auto& ae : m_allEntries) {
+		if (ae.job.fileId != fileId) continue;
+		for (auto& s : ae.allStreams)  apply(s);
+		for (auto& s : ae.keptStreams) apply(s);
+	}
+	for (int i = 0; i < m_entries.size(); ++i) {
+		if (m_entries[i].job.fileId != fileId) continue;
+		for (auto& s : m_entries[i].allStreams)  apply(s);
+		for (auto& s : m_entries[i].keptStreams) apply(s);
+		const QModelIndex idx = index(i);
+		emit dataChanged(idx, idx, { AllStreamsRole, KeptStreamsRole });
+	}
+}
+
 QString McJobListModel::rebuildCommandArgs(const QString& existingJson,
                                             const QList<StreamRecord>& all,
                                             const QList<StreamRecord>& kept)

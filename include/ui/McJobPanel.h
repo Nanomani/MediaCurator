@@ -32,6 +32,12 @@ public:
 	// After analyzeSingleFile creates a proposed job, call this to switch the
 	// filter to Proposed, select the new row and scroll it into view.
 	void scrollToFileJob(qint64 fileId);
+
+	// Call after directly updating an external sidecar stream's language + path in the
+	// DB (e.g. from the Library view's badge menu) so this panel's job card, if any
+	// exists for the file, reflects it immediately without a full reload.
+	void syncExternalStreamLanguage(qint64 fileId, int streamIndex,
+	                                 const QString& language, const QString& externalPath);
 	QList<qint64> visibleFileIds() const;
 
 public slots:

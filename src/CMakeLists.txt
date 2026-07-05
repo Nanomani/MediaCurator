@@ -138,6 +138,26 @@ set_target_properties(MediaCurator PROPERTIES
     MACOSX_BUNDLE_COPYRIGHT          "© 2024 Jacob Pedersen / Bleze Software"
 )
 
+if(APPLE)
+    # qt_add_executable(MACOSX_BUNDLE) sets INSTALL_RPATH to
+    # "@executable_path/../Frameworks" on this target. With
+    # BUILD_WITH_INSTALL_RPATH left at its default (FALSE), CMake tries to
+    # rewrite that rpath itself during `cmake --install` (i.e. CPack's
+    # "Install project" step) — deleting the build-tree rpath that points at
+    # the Qt SDK's lib/ directory and adding the install one. But macdeployqt
+    # already performed that exact rewrite as a POST_BUILD step, so by install
+    # time the add is a duplicate and the delete target no longer exists,
+    # which install_name_tool rejects. That failed rewrite leaves the staged
+    # .app inconsistent, which is what makes the later `hdiutil create` step
+    # fail with "Resource busy". Setting BUILD_WITH_INSTALL_RPATH here makes
+    # the linker embed the install rpath directly at build time, so CMake has
+    # nothing left to rewrite at install time.
+    set_target_properties(MediaCurator PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "@executable_path/../Frameworks"
+    )
+endif()
+
 target_include_directories(MediaCurator PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_SOURCE_DIR}/include"
@@ -278,9 +298,10 @@ elseif(APPLE)
     # macdeployqt already ran at POST_BUILD and embedded Qt frameworks into the
     # .app in the build directory.  install(TARGETS BUNDLE) copies the entire
     # bundle recursively, so the staged .app already has Frameworks/PlugIns.
-    # Running macdeployqt a second time here causes install_name_tool to error
-    # on the duplicate @executable_path/../Frameworks RPATH and leaves the
-    # staging directory in a state that hdiutil refuses to package.
+    # Do not run macdeployqt again here — see the BUILD_WITH_INSTALL_RPATH
+    # comment above for why a second rpath rewrite (whether from macdeployqt
+    # or from CMake's own install-time rpath fixup) breaks the staged bundle
+    # and cascades into "hdiutil: Resource busy" when CPack tries to package it.
     if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
         install(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/"
             DESTINATION MediaCurator.app/Contents/MacOS/tools)
