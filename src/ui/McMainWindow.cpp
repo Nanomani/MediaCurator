@@ -8,6 +8,7 @@
 #include "ui/McFileListModel.h"
 #include "ui/McJobPanel.h"
 #include "ui/McLegendDialog.h"
+#include "ui/McOnboardingDialog.h"
 #include "ui/McPreviewDialog.h"
 #include "ui/McJobReviewDialog.h"
 #include "ui/McSettingsDialog.h"
@@ -1273,6 +1274,13 @@ void McMainWindow::setupMenuBar()
 
 	// Help menu
 	QMenu* helpMenu = menuBar()->addMenu(tr("&Help"));
+	auto* onboardingAction = new QAction(svgIcon(":/icons/chat.svg"), tr("&Getting Started…"), this);
+	connect(onboardingAction, &QAction::triggered, this, [this] {
+		McOnboardingDialog dlg(this);
+		dlg.exec();
+	});
+	helpMenu->addAction(onboardingAction);
+	helpMenu->addSeparator();
 	auto* legendAction = new QAction(svgIcon(":/icons/legend_toggle.svg"), tr("&Legend…"), this);
 	connect(legendAction, &QAction::triggered, this, [this] {
 		McLegendDialog dlg(this);
@@ -1435,6 +1443,14 @@ void McMainWindow::showEvent(QShowEvent* event)
 		// First show: always reveal the queue if jobs exist — the "pinned hidden"
 		// setting is a within-session preference, not a permanent preference.
 		updateJobPanelVisibility(/*forceShow=*/true);
+
+		if (!AppSettings::instance().value("onboarding/seen", false).toBool()) {
+			QTimer::singleShot(0, this, [this] {
+				McOnboardingDialog dlg(this);
+				dlg.exec();
+				AppSettings::instance().setValue("onboarding/seen", true);
+			});
+		}
 	} else {
 		// Un-minimise / screen restore: just sync state, don't override user's choice.
 		updateJobPanelVisibility();

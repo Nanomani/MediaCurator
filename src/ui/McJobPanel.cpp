@@ -1614,17 +1614,19 @@ void McJobPanel::updateFooter()
 				const double totalEstMs = static_cast<double>(elapsedMs) * 100.0 / progress;
 				double etaSec = (totalEstMs - elapsedMs) / 1000.0;
 
+				// Average byte rate for the running job so far — reused for both the
+				// queued-jobs ETA extension and the displayed MB/s figure.
+				const double bytesPerMs = fileSize > 0 ? static_cast<double>(fileSize) / totalEstMs : 0.0;
+
 				// Extend with queued jobs using the current byte rate
-				if (fileSize > 0 && queued > 0) {
-					const double bytesPerMs = static_cast<double>(fileSize) / totalEstMs;
+				if (bytesPerMs > 0 && queued > 0) {
 					qint64 queuedBytes = 0;
 					for (int r = 0; r < m_model->rowCount(); ++r) {
 						const QModelIndex qi = m_model->index(r, 0);
 						if (qi.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))
 							queuedBytes += qi.data(McJobListModel::FileSizeRole).toLongLong();
 					}
-					if (bytesPerMs > 0)
-						etaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
+					etaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
 				}
 
 				const int totalSec = qMax(1, static_cast<int>(etaSec));
@@ -1636,6 +1638,11 @@ void McJobPanel::updateFooter()
 				else if (m > 0) etaStr = QStringLiteral("%1m %2s").arg(m).arg(s);
 				else            etaStr = QStringLiteral("%1s").arg(s);
 				text += tr(" · ~%1 remaining").arg(etaStr);
+
+				if (bytesPerMs > 0) {
+					const double mbPerSec = bytesPerMs * 1000.0 / 1048576.0;
+					text += tr(" (%1 MB/s)").arg(mbPerSec, 0, 'f', 1);
+				}
 			}
 			break;
 		}
