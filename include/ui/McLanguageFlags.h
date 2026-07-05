@@ -1,4 +1,6 @@
 #pragma once
+#include <QList>
+#include <QPair>
 #include <QPixmap>
 #include <QString>
 
@@ -20,6 +22,10 @@ namespace McLanguageFlags {
 
 // English language name ("Danish"), or the raw code if unknown.
 [[nodiscard]] QString displayName(const QString& lang);
+
+// (ISO 639-2 code, English display name) for every mapped language,
+// sorted by display name — for populating language-picker menus/dialogs.
+[[nodiscard]] QList<QPair<QString, QString>> commonLanguages();
 
 // Flag pixmap rendered at the given logical height (4:3 aspect, cached).
 // Returns a null pixmap when the language has no mapped flag.

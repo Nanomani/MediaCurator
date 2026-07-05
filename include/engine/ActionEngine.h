@@ -42,6 +42,15 @@ public:
 	// E.g. "movie.da.srt" + forced=true → "movie.da.forced.srt"
 	static QString computeRenamedSidecarPath(const QString& currentPath, bool wantForced);
 
+	// Returns the new sidecar path with an ISO 639-2 language token inserted right
+	// after the video's base name. Only meaningful when currentPath has no existing
+	// language token (i.e. the sidecar was previously unlabeled).
+	// E.g. currentPath="movie.forced.srt", videoBaseName="movie", langCode="eng"
+	//      → "movie.eng.forced.srt"
+	static QString insertLanguageIntoSidecarPath(const QString& currentPath,
+	                                              const QString& videoBaseName,
+	                                              const QString& langCode);
+
 private:
 	QString m_mkvmergePath;
 };

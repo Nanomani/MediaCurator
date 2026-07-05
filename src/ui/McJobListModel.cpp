@@ -51,6 +51,29 @@ static void sortEntriesByDisplaySavings(QList<JobCardEntry>& entries, QList<Qt::
 	checks  = std::move(sortedC);
 }
 
+// Bakes pending flag_changes_json overrides (default/forced/original/language) onto the
+// freshly-loaded stream records, so badges reflect a pending change immediately after a
+// reload — not just while the change is still held in the in-memory entry that made it
+// (e.g. setStreamFlag/setStreamLanguage), which doesn't survive reload() / reloadPaged().
+static void applyPendingFlagChanges(QList<StreamRecord>& streams, const QString& flagChangesJson)
+{
+	if (flagChangesJson.isEmpty()) return;
+	const QJsonArray changes = QJsonDocument::fromJson(flagChangesJson.toUtf8()).array();
+	for (const QJsonValue& v : changes) {
+		const QJsonObject o = v.toObject();
+		const int     streamIndex = o[QLatin1String("streamIndex")].toInt();
+		const QString flag        = o[QLatin1String("flag")].toString();
+		for (StreamRecord& s : streams) {
+			if (s.streamIndex != streamIndex) continue;
+			if      (flag == QLatin1String("default"))  s.isDefault  = o[QLatin1String("value")].toBool();
+			else if (flag == QLatin1String("forced"))   s.isForced   = o[QLatin1String("value")].toBool();
+			else if (flag == QLatin1String("original")) s.isOriginal = o[QLatin1String("value")].toBool();
+			else if (flag == QLatin1String("language")) s.language   = o[QLatin1String("value")].toString();
+			break;
+		}
+	}
+}
+
 McJobListModel::McJobListModel(QObject* parent)
 	: QAbstractListModel(parent)
 {
@@ -120,8 +143,9 @@ void McJobListModel::reload()
 		} else {
 			e.allStreams = streamsMap.value(djr.fileId);
 		}
-		e.keptStreams = computeKeptStreams(e.allStreams, argsMap.value(djr.jobId));
 		e.flagChangesJson = flagChangesMap.value(djr.jobId);
+		applyPendingFlagChanges(e.allStreams, e.flagChangesJson);
+		e.keptStreams = computeKeptStreams(e.allStreams, argsMap.value(djr.jobId));
 		m_allEntries.append(e);
 		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
@@ -163,8 +187,9 @@ void McJobListModel::reloadPaged(int limit)
 			e.allStreams = streamsFromJson(djr.originalStreamsJson);
 		else
 			e.allStreams = streamsMap.value(djr.fileId);
-		e.keptStreams     = computeKeptStreams(e.allStreams, djr.commandArgsJson);
 		e.flagChangesJson = djr.flagChangesJson;
+		applyPendingFlagChanges(e.allStreams, e.flagChangesJson);
+		e.keptStreams = computeKeptStreams(e.allStreams, djr.commandArgsJson);
 		m_allEntries.append(e);
 		m_allCheckStates.append(djr.status == QLatin1String("proposed") ? Qt::Checked : Qt::Unchecked);
 	}
@@ -764,6 +789,64 @@ void McJobListModel::setStreamFlag(const QModelIndex& index, int streamIndex,
 		o["streamIndex"] = streamIndex;
 		o["flag"]        = flag;
 		o["value"]       = value;
+		changes.append(o);
+	}
+
+	const QString newJson = QString::fromUtf8(
+		QJsonDocument(changes).toJson(QJsonDocument::Compact));
+	filt.flagChangesJson = newJson;
+	for (auto& ae : m_allEntries)
+		if (ae.job.jobId == jobId) { ae.flagChangesJson = newJson; break; }
+	DatabaseManager::instance().updateJobFlagChanges(jobId, newJson);
+
+	emit dataChanged(index, index, { AllStreamsRole, KeptStreamsRole, FlagChangesRole });
+}
+
+void McJobListModel::setStreamLanguage(const QModelIndex& index, int streamIndex,
+                                        const QString& langCode)
+{
+	if (!index.isValid() || index.row() >= m_entries.size()) return;
+
+	JobCardEntry& filt = m_entries[index.row()];
+	if (filt.job.status != "proposed" && filt.job.status != "queued") return;
+
+	const qint64 jobId = filt.job.jobId;
+
+	// Update the in-memory stream record so the badge reflects the new language immediately.
+	auto applyLang = [&](StreamRecord& s) {
+		if (s.streamIndex == streamIndex) s.language = langCode;
+	};
+	for (auto& s : filt.allStreams)   applyLang(s);
+	for (auto& s : filt.keptStreams)  applyLang(s);
+	for (auto& ae : m_allEntries) {
+		if (ae.job.jobId != jobId) continue;
+		for (auto& s : ae.allStreams)  applyLang(s);
+		for (auto& s : ae.keptStreams) applyLang(s);
+		break;
+	}
+
+	// Load current flag_changes_json, add/update the language entry for this stream
+	const auto jobOpt = DatabaseManager::instance().jobById(jobId);
+	QJsonArray changes = jobOpt
+		? QJsonDocument::fromJson(jobOpt->flagChangesJson.toUtf8()).array()
+		: QJsonArray{};
+
+	bool found = false;
+	for (int i = 0; i < changes.size(); ++i) {
+		QJsonObject o = changes[i].toObject();
+		if (o["streamIndex"].toInt() == streamIndex
+		        && o["flag"].toString() == QLatin1String("language")) {
+			o["value"] = langCode;
+			changes[i] = o;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		QJsonObject o;
+		o["streamIndex"] = streamIndex;
+		o["flag"]        = QStringLiteral("language");
+		o["value"]       = langCode;
 		changes.append(o);
 	}
 

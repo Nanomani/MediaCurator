@@ -16,6 +16,7 @@ static QString mkvmergeFlagArg(const QString& flag)
 	if (flag == QLatin1String("default"))     return QStringLiteral("--default-track-flag");
 	if (flag == QLatin1String("forced"))      return QStringLiteral("--forced-display-flag");
 	if (flag == QLatin1String("original"))    return QStringLiteral("--original-flag");
+	if (flag == QLatin1String("language"))    return QStringLiteral("--language");
 	return {};
 }
 
@@ -25,6 +26,7 @@ static QString mkvpropEditProp(const QString& flag)
 	if (flag == QLatin1String("default"))     return QStringLiteral("flag-default");
 	if (flag == QLatin1String("forced"))      return QStringLiteral("flag-forced");
 	if (flag == QLatin1String("original"))    return QStringLiteral("flag-original");
+	if (flag == QLatin1String("language"))    return QStringLiteral("language");
 	return {};
 }
 
@@ -93,11 +95,14 @@ QStringList ActionEngine::buildFlagArgsForRemux(const QString& flagChangesJson)
 	const QJsonArray changes = QJsonDocument::fromJson(flagChangesJson.toUtf8()).array();
 	for (const QJsonValue& v : changes) {
 		const QJsonObject o = v.toObject();
-		const QString argName = mkvmergeFlagArg(o["flag"].toString());
+		const QString flag    = o["flag"].toString();
+		const QString argName = mkvmergeFlagArg(flag);
 		if (argName.isEmpty()) continue;
-		// mkvmerge: --default-track-flag TRACKID:VALUE (0 or 1)
-		args << argName
-		     << QStringLiteral("%1:%2").arg(o["streamIndex"].toInt()).arg(o["value"].toBool() ? 1 : 0);
+		const QString value = (flag == QLatin1String("language"))
+		    ? o["value"].toString()
+		    : QString::number(o["value"].toBool() ? 1 : 0);
+		// mkvmerge: --default-track-flag TRACKID:VALUE (0/1) or --language TRACKID:eng
+		args << argName << QStringLiteral("%1:%2").arg(o["streamIndex"].toInt()).arg(value);
 	}
 	return args;
 }
@@ -114,13 +119,17 @@ QStringList ActionEngine::buildPropEditArgs(const QString& filePath,
 	const QJsonArray changes = QJsonDocument::fromJson(flagChangesJson.toUtf8()).array();
 	for (const QJsonValue& v : changes) {
 		const QJsonObject o = v.toObject();
-		const QString prop = mkvpropEditProp(o["flag"].toString());
+		const QString flag = o["flag"].toString();
+		const QString prop = mkvpropEditProp(flag);
 		if (prop.isEmpty()) continue;
-		const int trackPos = o["streamIndex"].toInt() + 1; // 0-based → 1-based
+		const int     trackPos = o["streamIndex"].toInt() + 1; // 0-based → 1-based
+		const QString value = (flag == QLatin1String("language"))
+		    ? o["value"].toString()
+		    : QString::number(o["value"].toBool() ? 1 : 0);
 		args << QStringLiteral("--edit")
 		     << QStringLiteral("track:@%1").arg(trackPos)
 		     << QStringLiteral("--set")
-		     << QStringLiteral("%1=%2").arg(prop).arg(o["value"].toBool() ? 1 : 0);
+		     << QStringLiteral("%1=%2").arg(prop, value);
 	}
 	return args;
 }
@@ -242,6 +251,18 @@ QString ActionEngine::computeRenamedSidecarPath(const QString& currentPath, bool
 	if (wantForced) parts.append(QStringLiteral("forced"));
 	return fi.absolutePath() + QLatin1Char('/')
 	       + parts.join(QLatin1Char('.')) + QLatin1Char('.') + fi.suffix();
+}
+
+QString ActionEngine::insertLanguageIntoSidecarPath(const QString& currentPath,
+                                                     const QString& videoBaseName,
+                                                     const QString& langCode)
+{
+	const QFileInfo fi(currentPath);
+	const QString   subBase   = fi.completeBaseName();
+	const QString   remainder = subBase.mid(videoBaseName.length()); // "" | ".forced" | ".sdh" …
+	return fi.absolutePath() + QLatin1Char('/')
+	       + videoBaseName + QLatin1Char('.') + langCode + remainder
+	       + QLatin1Char('.') + fi.suffix();
 }
 
 

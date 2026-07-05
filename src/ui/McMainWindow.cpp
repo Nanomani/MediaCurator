@@ -4,8 +4,10 @@
 #include "ui/McFilterPanel.h"
 #include "ui/McManageFoldersDialog.h"
 #include "ui/SvgIcon.h"
+#include "ui/McCardDelegate.h"
 #include "ui/McFileCardDelegate.h"
 #include "ui/McFileListModel.h"
+#include "ui/McLanguageFlags.h"
 #include "ui/McJobPanel.h"
 #include "ui/McLegendDialog.h"
 #include "ui/McOnboardingDialog.h"
@@ -43,6 +45,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QIcon>
 #include <QLineEdit>
 #include <QCursor>
 #include <QCloseEvent>
@@ -517,6 +520,46 @@ void McMainWindow::setupUi()
 		const QModelIndex idx = m_listView->indexAt(pos);
 		if (!idx.isValid()) return;
 		const FileRecord file = idx.data(McFileListModel::FileRole).value<FileRecord>();
+
+		// Detect whether the right-click landed on a specific track badge — same
+		// pattern as McJobPanel's badge context menu (customContextMenuRequested
+		// gives pos in list-view widget coordinates; hitTestBadgeStream and
+		// visualRect() both work in viewport coordinates).
+		{
+			const QPoint vpPos = m_listView->viewport()->mapFrom(m_listView, pos);
+			QList<StreamRecord> streams;
+			int hitStreamIdx = -1;
+			if (auto* del = qobject_cast<McCardDelegate*>(m_listView->itemDelegate())) {
+				streams = idx.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
+				const bool hasImdb = !idx.data(McFileListModel::ImdbRole).toString().isEmpty();
+				hitStreamIdx = del->hitTestBadgeStream(vpPos, m_listView->visualRect(idx),
+				                                        streams, m_listView->font(),
+				                                        hasImdb, file.originalLanguage);
+			}
+			const StreamRecord* hitStream = nullptr;
+			for (const StreamRecord& s : streams) {
+				if (s.streamIndex == hitStreamIdx) { hitStream = &s; break; }
+			}
+			const bool unlabeledSubtitle = hitStream
+				&& hitStream->codecType == QLatin1String("subtitle")
+				&& (hitStream->language.isEmpty() || hitStream->language == QLatin1String("und"));
+			if (unlabeledSubtitle) {
+				QMenu  menu(this);
+				QMenu* langMenu = menu.addMenu(tr("Set &Language"));
+				const StreamRecord streamCopy = *hitStream;
+				const qreal dpr = devicePixelRatioF();
+				for (const auto& [code, name] : McLanguageFlags::commonLanguages()) {
+					QAction* act = langMenu->addAction(name);
+					const QPixmap flag = McLanguageFlags::flag(code, McCardDelegate::kFlagH, dpr);
+					if (!flag.isNull()) act->setIcon(QIcon(flag));
+					connect(act, &QAction::triggered, this, [this, file, streamCopy, code] {
+						setSubtitleLanguage(file, streamCopy, code);
+					});
+				}
+				menu.exec(m_listView->viewport()->mapToGlobal(pos));
+				return;
+			}
+		}
 
 		QSet<int> selRows;
 		int firstSelRow = idx.row();
@@ -1882,6 +1925,63 @@ bool McMainWindow::analyzeSingleFile(qint64 fileId)
 	job.flagChangesJson     = inheritedFlagChanges;
 	(void)db.insertJob(job);
 	return true;
+}
+
+void McMainWindow::setSubtitleLanguage(const FileRecord& file, const StreamRecord& stream,
+                                        const QString& langCode)
+{
+	auto& db = DatabaseManager::instance();
+
+	if (stream.isExternal) {
+		if (stream.externalPath.isEmpty()) return;
+		const QString videoBaseName = QFileInfo(file.path).completeBaseName();
+		const QString newPath = ActionEngine::insertLanguageIntoSidecarPath(
+			stream.externalPath, videoBaseName, langCode);
+		if (!QFile::rename(stream.externalPath, newPath)) {
+			m_statusLabel->setText(tr("Failed to rename %1")
+				.arg(QFileInfo(stream.externalPath).fileName()));
+			return;
+		}
+		m_jobQueue->requestRescan(file.id);
+		m_statusLabel->setText(tr("Set subtitle language to %1 for %2")
+			.arg(McLanguageFlags::displayName(langCode), file.filename));
+		return;
+	}
+
+	// Embedded track: queue a language change for the next time this file is processed.
+	QJsonObject change;
+	change["streamIndex"] = stream.streamIndex;
+	change["flag"]        = QStringLiteral("language");
+	change["value"]       = langCode;
+
+	if (const auto existing = db.activeJobForFile(file.id)) {
+		QJsonArray updated;
+		for (const QJsonValue& v : QJsonDocument::fromJson(existing->flagChangesJson.toUtf8()).array()) {
+			const QJsonObject o = v.toObject();
+			if (o["streamIndex"].toInt() == stream.streamIndex
+			        && o["flag"].toString() == QLatin1String("language"))
+				continue; // superseded by the new pick below
+			updated.append(o);
+		}
+		updated.append(change);
+		db.updateJobFlagChanges(existing->id, QJsonDocument(updated).toJson(QJsonDocument::Compact));
+	} else {
+		JobRecord job;
+		job.fileId          = file.id;
+		job.status          = QStringLiteral("proposed");
+		job.jobType         = QStringLiteral("tag_edit");
+		job.commandArgsJson = QStringLiteral("[]");
+		job.summary         = tr("Set subtitle language");
+		job.flagChangesJson = QJsonDocument(QJsonArray{ change }).toJson(QJsonDocument::Compact);
+		(void)db.insertJob(job);
+	}
+
+	m_jobPanel->refresh();
+	m_listModel->refreshJobFilter();
+	updateJobPanelVisibility(/*forceShow=*/true);
+	m_jobPanel->scrollToFileJob(file.id);
+	m_statusLabel->setText(tr("Queued language change (%1) for %2")
+		.arg(McLanguageFlags::displayName(langCode), file.filename));
 }
 
 void McMainWindow::onAnalyzeLibrary()

@@ -76,6 +76,11 @@ public:
 	void setStreamFlag(const QModelIndex& index, int streamIndex,
 	                   const QString& flag, bool value);
 
+	// Sets the language of an embedded (non-external) stream on a Proposed or Queued job.
+	// Updates the in-memory stream record and persists flag_changes_json to DB — applied
+	// by mkvpropedit/mkvmerge when the job actually runs.
+	void setStreamLanguage(const QModelIndex& index, int streamIndex, const QString& langCode);
+
 	static QList<StreamRecord> computeKeptStreams(
 	    const QList<StreamRecord>& all,
 	    const QString& commandArgsJson);

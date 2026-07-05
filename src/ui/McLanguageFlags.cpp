@@ -1,5 +1,7 @@
 #include "ui/McLanguageFlags.h"
 
+#include <algorithm>
+
 #include <QHash>
 #include <QImage>
 #include <QPainter>
@@ -134,6 +136,24 @@ QString displayName(const QString& lang)
 QString toIso1(const QString& langCode)
 {
 	return iso1Map().value(langCode.toLower().trimmed());
+}
+
+QList<QPair<QString, QString>> commonLanguages()
+{
+	QList<QPair<QString, QString>> result;
+	for (const LangEntry& e : kLangTable) {
+		const QStringList codes = QString::fromLatin1(e.codes).split(QLatin1Char(','));
+		QString iso6392;
+		for (const QString& code : codes) {
+			if (code.length() == 3) { iso6392 = code; break; }
+		}
+		if (iso6392.isEmpty()) continue;
+		result.append({ iso6392, QString::fromLatin1(e.name) });
+	}
+	std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
+		return a.second < b.second;
+	});
+	return result;
 }
 
 QPixmap flag(const QString& lang, int height, qreal dpr)

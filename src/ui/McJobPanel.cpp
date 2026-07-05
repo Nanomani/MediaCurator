@@ -4,6 +4,7 @@
 #include "ui/McFilterPanel.h"
 #include "ui/McJobCardDelegate.h"
 #include "ui/McJobListModel.h"
+#include "ui/McLanguageFlags.h"
 #include "ui/RangeSlider.h"
 #include "ui/SvgIcon.h"
 #include "engine/ActionEngine.h"
@@ -31,8 +32,10 @@
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -691,6 +694,32 @@ void McJobPanel::setupUi()
 					wa->setDefaultWidget(row);
 					menu.addAction(wa);
 				}
+
+				const bool unlabeledSubtitle = hitStream->codecType == QLatin1String("subtitle")
+					&& (hitStream->language.isEmpty() || hitStream->language == QLatin1String("und"));
+				if (unlabeledSubtitle) {
+					QMenu* langMenu = menu.addMenu(tr("Set &Language"));
+					const StreamRecord streamCopy = *hitStream;
+					const qreal dpr = devicePixelRatioF();
+					for (const auto& [code, name] : McLanguageFlags::commonLanguages()) {
+						QAction* act = langMenu->addAction(name);
+						const QPixmap flag = McLanguageFlags::flag(code, McCardDelegate::kFlagH, dpr);
+						if (!flag.isNull()) act->setIcon(QIcon(flag));
+						connect(act, &QAction::triggered, this,
+						        [this, idx, streamCopy, fileId, filePath, code] {
+							if (streamCopy.isExternal) {
+								if (streamCopy.externalPath.isEmpty()) return;
+								const QString videoBaseName = QFileInfo(filePath).completeBaseName();
+								const QString newPath = ActionEngine::insertLanguageIntoSidecarPath(
+									streamCopy.externalPath, videoBaseName, code);
+								if (!QFile::rename(streamCopy.externalPath, newPath)) return;
+								if (m_queue) m_queue->requestRescan(fileId);
+							} else {
+								m_model->setStreamLanguage(idx, streamCopy.streamIndex, code);
+							}
+						});
+					}
+				}
 			}
 			menu.exec(m_listView->viewport()->mapToGlobal(pos));
 			return;
@@ -1207,6 +1236,17 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	});
 	connect(queue, &JobQueue::progressChanged,
 	        m_model, &McJobListModel::updateProgress);
+
+	// A rescan (e.g. after renaming a sidecar subtitle from the badge menu) runs
+	// asynchronously and updates streams/jobs in the DB out from under the model —
+	// reload so badges reflect the new state instead of showing stale pre-rescan data.
+	// Skip the reload when there's no live (proposed/queued/running) job for this file:
+	// that's the routine post-completion rescan, whose "done" card reads from a frozen
+	// stream snapshot anyway, so a full reload would just be wasted work.
+	connect(queue, &JobQueue::fileRescanned, this, [this](qint64 fileId) {
+		if (DatabaseManager::instance().hasActiveJobForFile(fileId))
+			refresh();
+	});
 
 	connect(&DatabaseManager::instance(), &DatabaseManager::jobStatusChanged,
 	        this, &McJobPanel::onJobStatusChanged);

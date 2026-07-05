@@ -78,6 +78,39 @@ QPixmap McCardDelegate::renderSvgIcon(const QString& resourcePath,
 	return pm;
 }
 
+// Reads a small sample of a subtitle sidecar file and returns a short plain-text
+// preview (first couple of cues, stripped of SRT/VTT sequence numbers and
+// timestamps) — used in the badge tooltip when the track has no detected language.
+static QString subtitlePreviewText(const QString& path)
+{
+	QFile f(path);
+	if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
+	const QString text = QString::fromUtf8(f.read(8192)); // small sample is enough
+
+	static const QRegularExpression seqNumLine(QStringLiteral(R"(^\d+$)"));
+	static const QRegularExpression timecodeLine(QStringLiteral(R"(-->|^WEBVTT|^NOTE)"));
+
+	QStringList cues;
+	QString     cue;
+	for (const QString& rawLine : text.split(QRegularExpression(QStringLiteral("\r\n|\n|\r")))) {
+		const QString line = rawLine.trimmed();
+		if (line.isEmpty()) {
+			if (!cue.isEmpty()) { cues << cue; cue.clear(); }
+			if (cues.size() >= 2) break;
+			continue;
+		}
+		if (seqNumLine.match(line).hasMatch())   continue;
+		if (timecodeLine.match(line).hasMatch()) continue;
+		if (!cue.isEmpty()) cue += QLatin1Char(' ');
+		cue += line;
+	}
+	if (!cue.isEmpty() && cues.size() < 2) cues << cue;
+
+	QString preview = cues.join(QStringLiteral("  /  "));
+	if (preview.length() > 200) preview = preview.left(197) + QStringLiteral("...");
+	return preview;
+}
+
 void McCardDelegate::prefetchFanart(const QString& path, QPixmap raw)
 {
 	s_fanartVersions[path]++;          // bump → old QPixmapCache entries become unreachable
@@ -798,6 +831,29 @@ bool McCardDelegate::helpEvent(QHelpEvent* event, QAbstractItemView* view,
 					if (!s.language.isEmpty() && s.language != QLatin1String("und"))
 						lines << tr("Language: %1 (%2)")
 						         .arg(McLanguageFlags::displayName(s.language), s.language);
+					else if (s.codecType == QLatin1String("subtitle") && s.isExternal
+					         && !s.externalPath.isEmpty()) {
+						const QString preview = subtitlePreviewText(s.externalPath);
+						lines << (preview.isEmpty()
+							? tr("No language detected \xE2\x80\x94 right-click to set")
+							: tr("Preview: \xE2\x80\x9C%1\xE2\x80\x9D").arg(preview));
+					}
+					// Job Queue only: surface a pending "set language" change queued
+					// via the Library view's badge menu, before the job actually runs.
+					if (!d.flagChangesJson.isEmpty()) {
+						const QJsonArray changes =
+							QJsonDocument::fromJson(d.flagChangesJson.toUtf8()).array();
+						for (const QJsonValue& v : changes) {
+							const QJsonObject o = v.toObject();
+							if (o[QLatin1String("streamIndex")].toInt() == s.streamIndex
+							        && o[QLatin1String("flag")].toString() == QLatin1String("language")) {
+								lines << tr("Pending: language will be set to %1")
+								         .arg(McLanguageFlags::displayName(
+								             o[QLatin1String("value")].toString()));
+								break;
+							}
+						}
+					}
 					if (s.isDefault)         lines << tr("\xE2\x98\x85  Default track");
 					if (s.isForced)          lines << tr("\xE2\x97\x8F  Forced");
 					if (s.isOriginal)        lines << tr("\xE2\x97\x8E  Original language (flag)");

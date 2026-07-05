@@ -13,23 +13,10 @@
 
 namespace Mc {
 
-static const QList<QPair<QString,QString>> kSubDlgLangNames = {
-	{"ara","Arabic"},  {"zho","Chinese"},  {"hrv","Croatian"}, {"ces","Czech"},
-	{"dan","Danish"},  {"nld","Dutch"},    {"eng","English"},  {"fin","Finnish"},
-	{"fra","French"},  {"deu","German"},   {"ell","Greek"},    {"heb","Hebrew"},
-	{"hun","Hungarian"},{"ind","Indonesian"},{"ita","Italian"},{"jpn","Japanese"},
-	{"kor","Korean"},  {"nor","Norwegian"},{"pol","Polish"},   {"por","Portuguese"},
-	{"ron","Romanian"},{"rus","Russian"},  {"srp","Serbian"},  {"slk","Slovak"},
-	{"spa","Spanish"}, {"swe","Swedish"},  {"tha","Thai"},     {"tur","Turkish"},
-	{"ukr","Ukrainian"},{"vie","Vietnamese"},
-};
-
 // static
 QString McSubtitleDownloadDialog::languageDisplayName(const QString& iso6392)
 {
-	for (const auto& [code, name] : kSubDlgLangNames)
-		if (code == iso6392) return name;
-	return iso6392;
+	return McLanguageFlags::displayName(iso6392);
 }
 
 McSubtitleDownloadDialog::McSubtitleDownloadDialog(const QString& apiKey,

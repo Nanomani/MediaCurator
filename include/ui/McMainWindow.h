@@ -26,6 +26,8 @@ class McWhatIfDialog;
 class SimulateWorker;
 class ScanWorker;
 class UserProfile;
+struct FileRecord;
+struct StreamRecord;
 
 class McMainWindow : public QMainWindow
 {
@@ -72,6 +74,7 @@ private:
 	void updateJobPanelVisibility(bool forceShow = false);   // show/hide job panel based on whether any jobs exist
 	void launchInVlc(const QString& rawPath);
 	bool analyzeSingleFile(qint64 fileId);
+	void setSubtitleLanguage(const FileRecord& file, const StreamRecord& stream, const QString& langCode);
 #ifdef Q_OS_WIN
 	void setTaskbarProgress(int value, int total = 100);
 	void clearTaskbarProgress();
