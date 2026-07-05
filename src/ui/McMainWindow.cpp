@@ -1465,6 +1465,7 @@ void McMainWindow::onScanFolder()
 		roots << folder;
 	AppSettings::instance().setValue("scan/roots", roots);
 
+	m_newFilesFound.clear();
 	createScanWorker(folder);
 }
 
@@ -1485,6 +1486,7 @@ void McMainWindow::onScanLibrary()
 	}
 
 	m_pendingRoots = roots;
+	m_newFilesFound.clear();
 	createScanWorker(m_pendingRoots.takeFirst());
 }
 
@@ -1495,10 +1497,12 @@ void McMainWindow::onRemoveFolder()
 	// Route Add Folder through the existing scan infrastructure — the dialog
 	// is just a view and emits a signal rather than owning its own worker.
 	connect(&dlg, &McManageFoldersDialog::folderAdded, this, [this](const QString& path) {
-		if (m_scanThread && m_scanThread->isRunning())
+		if (m_scanThread && m_scanThread->isRunning()) {
 			m_pendingRoots << path;
-		else
+		} else {
+			m_newFilesFound.clear();
 			createScanWorker(path);
+		}
 	});
 
 	dlg.exec();
@@ -1548,10 +1552,11 @@ void McMainWindow::onScanProgress(int current, int total, const QString& current
 		m_statusLabel->setText(tr("Scanning (%1 found): %2").arg(current).arg(currentFile));
 }
 
-void McMainWindow::onScanFinished(int /*scanned*/, int /*added*/, int /*updated*/, int /*failed*/, int /*skipped*/, int /*removed*/)
+void McMainWindow::onScanFinished(int /*scanned*/, int /*added*/, int /*updated*/, int /*failed*/, int /*skipped*/, int /*removed*/, QStringList newFiles)
 {
 	m_scanThread = nullptr;
 	m_scanWorker = nullptr;
+	m_newFilesFound << newFiles;
 
 	if (!m_pendingRoots.isEmpty()) {
 		m_statusLabel->setText(tr("Folder scan done — %1 more to go…").arg(m_pendingRoots.size()));
@@ -1560,6 +1565,15 @@ void McMainWindow::onScanFinished(int /*scanned*/, int /*added*/, int /*updated*
 	}
 
 	setScanningState(false);
+
+	if (m_newFilesFound.isEmpty()) {
+		QMessageBox::information(this, tr("Scan Complete"), tr("No new files found."));
+	} else {
+		QMessageBox box(QMessageBox::Information, tr("Scan Complete"),
+			tr("Found %n new file(s).", "", m_newFilesFound.size()), QMessageBox::Ok, this);
+		box.setDetailedText(m_newFilesFound.join('\n'));
+		box.exec();
+	}
 
 	// Model was updated incrementally via fileProcessed/fileRemoved signals — no full reload needed.
 	m_jobPanel->refresh();

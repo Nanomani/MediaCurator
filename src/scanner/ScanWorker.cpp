@@ -139,7 +139,7 @@ void ScanWorker::run()
 {
 	if (m_rootPath.isEmpty()) {
 		emit error("No scan path set");
-		emit finished(0, 0, 0, 0, 0, 0);
+		emit finished(0, 0, 0, 0, 0, 0, {});
 		return;
 	}
 
@@ -151,6 +151,7 @@ void ScanWorker::run()
 
 	int added = 0, updated = 0, failed = 0, skipped = 0, index = 0;
 	QSet<QString> foundPaths;
+	QStringList newFiles;
 
 	QElapsedTimer progressTimer;
 	progressTimer.start();
@@ -228,6 +229,7 @@ void ScanWorker::run()
 			db.deletePendingJobsForFile(*fileId);
 		} else {
 			++added;
+			newFiles << path;
 		}
 
 		// Resolve IMDb ID: embedded container tag takes priority, then .nfo sidecar.
@@ -264,7 +266,7 @@ void ScanWorker::run()
 	}
 
 	db.endScanRun(scanRunId, added, updated, removed);
-	emit finished(index, added, updated, failed, skipped, removed);
+	emit finished(index, added, updated, failed, skipped, removed, newFiles);
 }
 
 } // namespace Mc

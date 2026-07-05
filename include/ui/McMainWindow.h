@@ -44,7 +44,7 @@ private slots:
 	void onScanLibrary();
 	void onRemoveFolder();
 	void onScanProgress(int current, int total, const QString& currentFile);
-	void onScanFinished(int scanned, int added, int updated, int failed, int skipped, int removed);
+	void onScanFinished(int scanned, int added, int updated, int failed, int skipped, int removed, QStringList newFiles);
 	void onRefreshView();
 	void onAnalyzeLibrary();
 	void onAnalyzeProgress(int current, int total, const QString& filename);
@@ -100,6 +100,7 @@ private:
 	QPushButton*     m_btnCancelAnalyze  = nullptr;
 	QSplitter*       m_splitter          = nullptr;
 	QStringList      m_pendingRoots;
+	QStringList      m_newFilesFound;   // accumulated across chained roots within one scan session
 	QTimer*          m_analyzeRefreshTimer = nullptr;
 	QThread*         m_loadThread      = nullptr;
 	LibraryLoader*   m_loader          = nullptr;
