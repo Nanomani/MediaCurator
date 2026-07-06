@@ -35,9 +35,9 @@ namespace FallbackBps {
 	constexpr double kTrueHd          = 3'500'000.0; // TrueHD / Atmos — 5.1 (6ch) reference
 	constexpr double kTrueHdPerChannel =  583'333.0; // kTrueHd / 6 — scale by actual channel count
 	constexpr double kPcmDefault      = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
-    constexpr double kFlac =            1'352'000.0; // FLAC (lossless, variable)
-	constexpr double kPgsSubtitle     =    21'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher)
-	constexpr double kTextSubtitle    =    12'000.0; // SRT / ASS / SSA / WebVTT
+	constexpr double kFlac =              880'000.0; // FLAC (lossless, variable)
+	constexpr double kPgsSubtitle     =    14'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher)
+	constexpr double kTextSubtitle    =     7'000.0; // SRT / ASS / SSA / WebVTT
 } // namespace FallbackBps
 
 // Returns the effective bitrate used for size estimation:
