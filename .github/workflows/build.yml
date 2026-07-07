@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [ main, develop ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
 
@@ -237,3 +238,28 @@ jobs:
         name: MediaCurator-Linux-DEB
         path: build/packages/MediaCurator-*.deb
         if-no-files-found: error
+
+  # Runs only on tag pushes (e.g. v1.0.0) — collects the installers built by
+  # the three jobs above and publishes them as a GitHub Release. The version
+  # baked into each installer comes from CMakeLists.txt's PROJECT_VERSION, so
+  # the tag pushed here should match that version (see Version.h.in).
+  release:
+    needs: [ build-windows, build-macos, build-linux ]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    name: Publish release
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download all installers
+      uses: actions/download-artifact@v6
+      with:
+        path: artifacts
+
+    - name: Create release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: artifacts/**/*
+        generate_release_notes: true
+        fail_on_unmatched_files: true

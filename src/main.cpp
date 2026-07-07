@@ -1,6 +1,7 @@
-﻿#include "ui/McMainWindow.h"
+#include "ui/McMainWindow.h"
 #include "core/AppSettings.h"
 #include "core/DatabaseManager.h"
+#include "core/Version.h"
 
 #include <QApplication>
 #include <QIcon>
@@ -230,7 +231,7 @@ int main(int argc, char* argv[])
 	app.setPalette(pal);
 
 	app.setApplicationName("MediaCurator");
-	app.setApplicationVersion("0.9.0");
+	app.setApplicationVersion(MC_VERSION_STRING);
 	app.setOrganizationName("Bleze Software");
 	app.setOrganizationDomain("mediacurator.app");
 

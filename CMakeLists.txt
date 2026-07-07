@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(MediaCurator
-    VERSION 0.9.0
+    VERSION 1.0.0
     DESCRIPTION "Smart media library curator — scan, filter, and clean your video collection"
     HOMEPAGE_URL "https://github.com/yourusername/MediaCurator"
     LANGUAGES CXX
@@ -49,6 +49,16 @@ find_package(Qt6 REQUIRED COMPONENTS
 )
 
 qt_standard_project_setup()
+
+# ── Generated version header ──────────────────────────────────────────────────
+# Single source of truth for the app version is the project(VERSION ...) call
+# above. Everything else (CPack, macOS bundle, in-app "About"/splash, this
+# header) derives from PROJECT_VERSION — bump it in one place per release.
+configure_file(
+    "${CMAKE_SOURCE_DIR}/include/core/Version.h.in"
+    "${CMAKE_BINARY_DIR}/generated/core/Version.h"
+    @ONLY
+)
 
 # ── nlohmann/json (vendored single-header) ────────────────────────────────────
 add_library(nlohmann_json INTERFACE)

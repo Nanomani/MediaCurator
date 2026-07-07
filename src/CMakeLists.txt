@@ -135,7 +135,7 @@ set_target_properties(MediaCurator PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER     "dk.bleze.mediacurator"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_BUNDLE_VERSION       "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_COPYRIGHT          "© 2024 Jacob Pedersen / Bleze Software"
+    MACOSX_BUNDLE_COPYRIGHT          "© 2026 Jacob Pedersen / Bleze Software"
 )
 
 if(APPLE)
@@ -161,6 +161,7 @@ endif()
 target_include_directories(MediaCurator PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_BINARY_DIR}/generated"
 )
 
 target_link_libraries(MediaCurator PRIVATE
