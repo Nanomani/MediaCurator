@@ -332,9 +332,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 		m_progressBar->setRange(0, 100);
 		m_progressBar->setValue(0);
 		m_progressBar->setVisible(true);
-		const QString suffix = m_queuedAtStart > 0
-		    ? tr(" (%1 queued)").arg(m_queuedAtStart) : QString();
-		m_statusLabel->setText(tr("Processing '%1'…%2").arg(m_currentJobFilename, suffix));
+		m_statusLabel->setText(tr("Processing '%1'").arg(m_currentJobFilename));
 	});
 
 	connect(m_jobQueue, &JobQueue::progressChanged, this, [this](qint64, int pct) {
@@ -343,9 +341,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 			// output file before the process exits. Switch to an indeterminate
 			// animation so the UI doesn't look frozen at 100%.
 			m_progressBar->setRange(0, 0);
-			const QString finSuffix = m_queuedAtStart > 0
-			    ? tr(" (%1 queued)").arg(m_queuedAtStart) : QString();
-			m_statusLabel->setText(tr("Finishing '%1'…%2").arg(m_currentJobFilename, finSuffix));
+			m_statusLabel->setText(tr("Finishing '%1'").arg(m_currentJobFilename));
 #ifdef Q_OS_WIN
 			if (m_taskbar)
 				m_taskbar->SetProgressState(reinterpret_cast<HWND>(winId()), TBPF_INDETERMINATE);

@@ -5,9 +5,11 @@
 #include <QFile>
 #include <QRegularExpression>
 #include <QFileInfo>
+#include <QMetaObject>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTextStream>
+#include <QThreadPool>
 
 #include <filesystem>
 
@@ -147,8 +149,6 @@ void RemuxJob::onProcessFinished(int exitCode)
 		QRegularExpression::CaseInsensitiveOption);
 	m_hasTrackMismatch = mismatchRe.match(m_log).hasMatch();
 
-	qint64 savedBytes = 0;
-
 	// mkvmerge exit codes: 0 = success, 1 = warnings (output still valid), 2 = error
 	if ((exitCode == 0 || exitCode == 1) && !m_outputPath.isEmpty() && !m_inputPath.isEmpty()) {
 		if (m_hasTrackMismatch) {
@@ -157,81 +157,118 @@ void RemuxJob::onProcessFinished(int exitCode)
 			emit finished(exitCode, m_log, 0);
 			return;
 		}
-		const qint64 outputSize = QFileInfo(m_outputPath).size();
 
-		// Capture the original file's timestamps before we rename/delete it
-		const QFileInfo origFi(m_inputPath);
-		const QDateTime origCreated  = origFi.birthTime();
-		const QDateTime origModified = origFi.lastModified();
+		// Renaming/deleting the file and writing the log are pure filesystem work —
+		// can be slow on network shares — so run them off the UI thread and marshal
+		// the result back via a queued invocation, keeping `finished` emitted from
+		// this object's own (UI) thread same as a synchronous call site would expect.
+		const QString     outputPath      = m_outputPath;
+		const QString     finalOutputPath = m_finalOutputPath;
+		const QString     inputPath       = m_inputPath;
+		const qint64      originalSize    = m_originalSize;
+		const QString     log             = m_log;
+		const bool        writeLog        = m_writeLog;
+		const QString     mkvmergePath    = m_mkvmergePath;
+		const QStringList args            = m_args;
+		const QString     descriptionText = m_descriptionText;
 
-		const bool isInPlace = (m_finalOutputPath == m_inputPath);
-		try {
-			// Rename temp file to final destination (same as input for MKV in-place)
-			std::filesystem::rename(m_outputPath.toStdWString(),
-			                        m_finalOutputPath.toStdWString());
-			// Restore the original file's timestamps on the new output
+		QThreadPool::globalInstance()->start(
+		    [this, outputPath, finalOutputPath, inputPath, originalSize, log,
+		     writeLog, mkvmergePath, args, descriptionText, exitCode]() mutable {
+			QString finishLog  = log;
+			qint64  savedBytes = 0;
+
+			const qint64 outputSize = QFileInfo(outputPath).size();
+
+			// Capture the original file's timestamps before we rename/delete it
+			const QFileInfo origFi(inputPath);
+			const QDateTime origCreated  = origFi.birthTime();
+			const QDateTime origModified = origFi.lastModified();
+
+			const bool isInPlace = (finalOutputPath == inputPath);
+			try {
+				// Rename temp file to final destination (same as input for MKV in-place)
+				std::filesystem::rename(outputPath.toStdWString(),
+				                        finalOutputPath.toStdWString());
+				// Restore the original file's timestamps on the new output
 #ifdef Q_OS_WIN
-			preserveTimestamps(m_finalOutputPath, origCreated, origModified);
+				preserveTimestamps(finalOutputPath, origCreated, origModified);
 #endif
-			if (!isInPlace) {
-				// Non-MKV conversion (mp4/avi/iso → mkv): delete the original
-				QFile::remove(m_inputPath);
-			}
-			savedBytes = qMax(0LL, m_originalSize - outputSize);
-		} catch (const std::filesystem::filesystem_error& e) {
-			// On SMB/NFS shares the rename can succeed on disk but still throw
-			// (the server commits the operation then returns an ambiguous status).
-			// Verify the actual filesystem state before treating it as a failure.
-			const bool destExists = QFileInfo::exists(m_finalOutputPath);
-			const bool srcGone    = !QFileInfo::exists(m_outputPath);
-			if (destExists && srcGone) {
-				// Rename succeeded despite the error — treat as success.
-				savedBytes = qMax(0LL, m_originalSize - outputSize);
-				m_log += QStringLiteral("\nNote: rename reported a network error but the file is in the correct state (%1)").arg(e.what());
-			} else {
-				m_log += QStringLiteral("\nRename failed: %1").arg(e.what());
-				exitCode = -2;
-			}
-		}
-
-		if ((exitCode == 0 || exitCode == 1) && m_writeLog) {
-			const QString logPath = m_finalOutputPath + QStringLiteral(".mc-log");
-			QFile logFile(logPath);
-			if (logFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-				QTextStream ts(&logFile);
-				const QFileInfo fi(m_finalOutputPath);
-				ts << "MediaCurator Processing Report\n";
-				ts << "==============================\n\n";
-				ts << "File:    " << fi.fileName() << "\n";
-				ts << "Path:    " << fi.absolutePath() << "\n";
-				ts << "Date:    " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n";
-				ts << "Before:  " << QString::number(m_originalSize) << " bytes ("
-				   << QString::number(m_originalSize / 1048576.0, 'f', 1) << " MB)\n";
-				ts << "After:   " << QString::number(outputSize) << " bytes ("
-				   << QString::number(outputSize / 1048576.0, 'f', 1) << " MB)\n";
-				if (savedBytes > 0)
-					ts << "Reclaimed: " << QString::number(savedBytes) << " bytes ("
-					   << QString::number(savedBytes / 1048576.0, 'f', 1) << " MB)\n";
-				ts << "\n";
-				if (!m_descriptionText.isEmpty()) {
-					ts << "Removed Tracks\n";
-					ts << "--------------\n";
-					ts << m_descriptionText << "\n\n";
+				if (!isInPlace) {
+					// Non-MKV conversion (mp4/avi/iso → mkv): delete the original
+					QFile::remove(inputPath);
 				}
-				ts << "Command\n";
-				ts << "-------\n";
-				ts << m_mkvmergePath;
-				for (const QString& arg : m_args)
-					ts << " " << arg;
-				ts << "\n";
-				logFile.close();
+				savedBytes = qMax(0LL, originalSize - outputSize);
+			} catch (const std::filesystem::filesystem_error& e) {
+				// On SMB/NFS shares the rename can succeed on disk but still throw
+				// (the server commits the operation then returns an ambiguous status).
+				// Verify the actual filesystem state before treating it as a failure.
+				const bool destExists = QFileInfo::exists(finalOutputPath);
+				const bool srcGone    = !QFileInfo::exists(outputPath);
+				if (destExists && srcGone) {
+					// Rename succeeded despite the error — treat as success.
+					savedBytes = qMax(0LL, originalSize - outputSize);
+					finishLog += QStringLiteral("\nNote: rename reported a network error but the file is in the correct state (%1)").arg(e.what());
+				} else {
+					finishLog += QStringLiteral("\nRename failed: %1").arg(e.what());
+					exitCode = -2;
+				}
 			}
-		}
-	} else if (exitCode != 0 && !m_outputPath.isEmpty()) {
-		QFile::remove(m_outputPath);
+
+			if ((exitCode == 0 || exitCode == 1) && writeLog) {
+				const QString logPath = finalOutputPath + QStringLiteral(".mc-log");
+				QFile logFile(logPath);
+				if (logFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+					QTextStream ts(&logFile);
+					const QFileInfo fi(finalOutputPath);
+					ts << "MediaCurator Processing Report\n";
+					ts << "==============================\n\n";
+					ts << "File:    " << fi.fileName() << "\n";
+					ts << "Path:    " << fi.absolutePath() << "\n";
+					ts << "Date:    " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n";
+					ts << "Before:  " << QString::number(originalSize) << " bytes ("
+					   << QString::number(originalSize / 1048576.0, 'f', 1) << " MB)\n";
+					ts << "After:   " << QString::number(outputSize) << " bytes ("
+					   << QString::number(outputSize / 1048576.0, 'f', 1) << " MB)\n";
+					if (savedBytes > 0)
+						ts << "Reclaimed: " << QString::number(savedBytes) << " bytes ("
+						   << QString::number(savedBytes / 1048576.0, 'f', 1) << " MB)\n";
+					ts << "\n";
+					if (!descriptionText.isEmpty()) {
+						ts << "Removed Tracks\n";
+						ts << "--------------\n";
+						ts << descriptionText << "\n\n";
+					}
+					ts << "Command\n";
+					ts << "-------\n";
+					ts << mkvmergePath;
+					for (const QString& arg : args)
+						ts << " " << arg;
+					ts << "\n";
+					logFile.close();
+				}
+			}
+
+			QMetaObject::invokeMethod(this, [this, exitCode, finishLog, savedBytes] {
+				emit finished(exitCode, finishLog, savedBytes);
+			}, Qt::QueuedConnection);
+		});
+		return;
 	}
 
-	emit finished(exitCode, m_log, savedBytes);
+	if (exitCode != 0 && !m_outputPath.isEmpty()) {
+		const QString outputPath = m_outputPath;
+		const QString log        = m_log;
+		QThreadPool::globalInstance()->start([this, outputPath, log, exitCode]() {
+			QFile::remove(outputPath);
+			QMetaObject::invokeMethod(this, [this, exitCode, log] {
+				emit finished(exitCode, log, 0);
+			}, Qt::QueuedConnection);
+		});
+		return;
+	}
+
+	emit finished(exitCode, m_log, 0);
 }
 
 } // namespace Mc

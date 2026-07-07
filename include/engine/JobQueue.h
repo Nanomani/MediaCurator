@@ -26,9 +26,11 @@ public:
 
 	bool isRunning()   const { return m_running; }
 	bool isPaused()    const { return m_paused; }
-	// True only when mkvmerge is actively executing — use this for close guards.
-	// isRunning() stays true while paused-with-queued-jobs, which is not "running".
-	bool hasActiveJob() const { return m_currentJob != nullptr; }
+	// True while mkvmerge is actively executing OR a job is in its terminal
+	// file-I/O phase (rename/delete of the source or output file) — use this for
+	// close guards. isRunning() stays true while paused-with-queued-jobs, which is
+	// not "running".
+	bool hasActiveJob() const { return m_currentJob != nullptr || m_finishBusy; }
 
 signals:
 	void jobStarted(qint64 jobId);
@@ -75,6 +77,12 @@ private:
 	// and flips their entries in the job's frozen stream snapshot from external to
 	// internal so a "done" card stops showing them as standalone sidecar files.
 	void deleteMergedSidecars(qint64 jobId);
+	// Tail of the tag-edit path once mkvpropedit (if any) has finished — deletes/renames
+	// sidecar files, updates the DB, emits jobFinished, rescans, and advances the queue.
+	// Runs on a background thread; clears m_finishBusy just before handing back to runNext().
+	void finishTagEditJob(qint64 jobId, qint64 fileId, bool propEditOk, const QString& log,
+	                       const QString& sidecarDeletionsJson, const QString& flagChangesJson,
+	                       const QList<StreamRecord>& allStreams);
 
 	RemuxJob*      m_currentJob   = nullptr;
 	qint64         m_currentJobId = -1;
@@ -84,6 +92,9 @@ private:
 	bool           m_writeJobLog  = false;
 	bool           m_mergeSidecarSubtitles = true;
 	JobSortMode    m_sortMode     = JobSortMode::SmallestFirst;
+	// True whenever a job (remux, tag-edit, or review commit) is in its terminal
+	// file-I/O phase — set at the start of that phase, cleared right before runNext().
+	bool           m_finishBusy   = false;
 
 	// State held while waiting for user to review a track-mismatch result
 	qint64         m_reviewJobId    = -1;

@@ -193,6 +193,7 @@ void JobQueue::startJob(const JobRecord& job)
 
 		db.updateJobStatus(jobId, "running");
 		emit jobStarted(jobId);
+		m_finishBusy = true;
 
 		// Load streams to separate internal (mkvpropedit) vs external (rename) changes.
 		const QList<StreamRecord> allStreams = fileId > 0
@@ -200,74 +201,41 @@ void JobQueue::startJob(const JobRecord& job)
 		const QString internalFlags = ActionEngine::filterInternalFlagChanges(
 			flagChangesJson, allStreams);
 
-		bool ok = true;
-		QString log;
+		// Run mkvpropedit for internal (container) flag changes only, asynchronously —
+		// finishTagEditJob() picks up from here once it (if any) has exited.
+		if (internalFlags.isEmpty()) {
+			finishTagEditJob(jobId, fileId, true, QString(), sidecarDeletionsJson,
+			                  flagChangesJson, allStreams);
+			return;
+		}
 
-		// Run mkvpropedit for internal (container) flag changes only
-		if (!internalFlags.isEmpty()) {
-			const auto fileOpt = db.fileById(fileId);
-			if (!fileOpt) {
-				db.updateJobStatus(jobId, "failed", -1);
-				emit jobFinished(jobId, false, 0);
-				if (m_running && !m_paused) runNext();
-				return;
-			}
+		const auto fileOpt = db.fileById(fileId);
+		if (!fileOpt) {
+			db.updateJobStatus(jobId, "failed", -1);
+			m_finishBusy = false;
+			emit jobFinished(jobId, false, 0);
+			if (m_running && !m_paused) runNext();
+			return;
+		}
 
-			const QStringList args        = ActionEngine::buildPropEditArgs(fileOpt->path, internalFlags);
-			const QString mkvpropeditPath = ExternalTools::instance().mkvpropeditPath();
+		const QStringList args        = ActionEngine::buildPropEditArgs(fileOpt->path, internalFlags);
+		const QString mkvpropeditPath = ExternalTools::instance().mkvpropeditPath();
 
-			// mkvpropedit is near-instant; run it synchronously on this thread.
-			QProcess proc;
-			proc.setProcessChannelMode(QProcess::MergedChannels);
-			proc.start(mkvpropeditPath, args);
-			proc.waitForFinished(-1);
-			const int exitCode = proc.exitCode();
-			ok = (proc.exitStatus() == QProcess::NormalExit && exitCode == 0);
-			const QByteArray rawLog = proc.readAllStandardOutput();
-			log = rawLog.isEmpty()
+		auto* proc = new QProcess(this);
+		proc->setProcessChannelMode(QProcess::MergedChannels);
+		connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+		        this, [this, proc, jobId, fileId, sidecarDeletionsJson, flagChangesJson, allStreams]
+		              (int exitCode, QProcess::ExitStatus status) {
+			const bool ok = (status == QProcess::NormalExit && exitCode == 0);
+			const QByteArray rawLog = proc->readAllStandardOutput();
+			const QString log = rawLog.isEmpty()
 				? (ok ? QStringLiteral("mkvpropedit completed (exit 0)")
 				      : QStringLiteral("mkvpropedit failed (exit %1)").arg(exitCode))
 				: QString::fromLocal8Bit(rawLog);
-		}
-
-		// Delete sidecar subtitle files
-		if (ok && !sidecarDeletionsJson.isEmpty()) {
-			const QJsonArray paths = QJsonDocument::fromJson(sidecarDeletionsJson.toUtf8()).array();
-			for (const QJsonValue& v : paths) {
-				const QString path = v.toString();
-				if (!path.isEmpty() && !QFile::remove(path))
-					qWarning() << "JobQueue: failed to delete sidecar" << path;
-			}
-		}
-
-		// Rename sidecar files for external stream flag changes
-		if (ok && !flagChangesJson.isEmpty() && !allStreams.isEmpty()) {
-			QHash<int, QHash<QString, bool>> changesByStream;
-			for (const QJsonValue& v : QJsonDocument::fromJson(flagChangesJson.toUtf8()).array()) {
-				const QJsonObject o = v.toObject();
-				changesByStream[o[QLatin1String("streamIndex")].toInt()]
-				               [o[QLatin1String("flag")].toString()] = o[QLatin1String("value")].toBool();
-			}
-			for (const StreamRecord& s : allStreams) {
-				if (!s.isExternal || s.externalPath.isEmpty()) continue;
-				if (!changesByStream.contains(s.streamIndex)) continue;
-				const auto& ch = changesByStream[s.streamIndex];
-				const bool wantForced = ch.value(QLatin1String("forced"), s.isForced);
-				const QString newPath = ActionEngine::computeRenamedSidecarPath(
-					s.externalPath, wantForced);
-				if (newPath != s.externalPath && !QFile::rename(s.externalPath, newPath))
-					qWarning() << "JobQueue: failed to rename sidecar"
-					           << s.externalPath << "->" << newPath;
-			}
-		}
-
-		db.updateJobStatus(jobId, ok ? "done" : "failed", ok ? 0 : -1, log);
-		emit jobFinished(jobId, ok, 0);
-
-		if (ok && fileId > 0)
-			rescanFile(fileId, {});  // picks up renamed sidecars automatically
-
-		if (m_running && !m_paused) runNext();
+			proc->deleteLater();
+			finishTagEditJob(jobId, fileId, ok, log, sidecarDeletionsJson, flagChangesJson, allStreams);
+		});
+		proc->start(mkvpropeditPath, args);
 		return;
 	}
 
@@ -375,6 +343,62 @@ void JobQueue::startJob(const JobRecord& job)
 	emit jobStarted(jobId);
 
 	m_currentJob->run();
+}
+
+void JobQueue::finishTagEditJob(qint64 jobId, qint64 fileId, bool propEditOk, const QString& log,
+                                 const QString& sidecarDeletionsJson, const QString& flagChangesJson,
+                                 const QList<StreamRecord>& allStreams)
+{
+	// Sidecar delete/rename and the DB status update are filesystem/SQL work with no
+	// bearing on this object's own state — run them off the UI thread, same pattern
+	// as the remux-completion path in RemuxJob::onProcessFinished().
+	QThreadPool::globalInstance()->start(
+	    [this, jobId, fileId, propEditOk, log, sidecarDeletionsJson, flagChangesJson, allStreams]() {
+		bool ok = propEditOk;
+
+		// Delete sidecar subtitle files
+		if (ok && !sidecarDeletionsJson.isEmpty()) {
+			const QJsonArray paths = QJsonDocument::fromJson(sidecarDeletionsJson.toUtf8()).array();
+			for (const QJsonValue& v : paths) {
+				const QString path = v.toString();
+				if (!path.isEmpty() && !QFile::remove(path))
+					qWarning() << "JobQueue: failed to delete sidecar" << path;
+			}
+		}
+
+		// Rename sidecar files for external stream flag changes
+		if (ok && !flagChangesJson.isEmpty() && !allStreams.isEmpty()) {
+			QHash<int, QHash<QString, bool>> changesByStream;
+			for (const QJsonValue& v : QJsonDocument::fromJson(flagChangesJson.toUtf8()).array()) {
+				const QJsonObject o = v.toObject();
+				changesByStream[o[QLatin1String("streamIndex")].toInt()]
+				               [o[QLatin1String("flag")].toString()] = o[QLatin1String("value")].toBool();
+			}
+			for (const StreamRecord& s : allStreams) {
+				if (!s.isExternal || s.externalPath.isEmpty()) continue;
+				if (!changesByStream.contains(s.streamIndex)) continue;
+				const auto& ch = changesByStream[s.streamIndex];
+				const bool wantForced = ch.value(QLatin1String("forced"), s.isForced);
+				const QString newPath = ActionEngine::computeRenamedSidecarPath(
+					s.externalPath, wantForced);
+				if (newPath != s.externalPath && !QFile::rename(s.externalPath, newPath))
+					qWarning() << "JobQueue: failed to rename sidecar"
+					           << s.externalPath << "->" << newPath;
+			}
+		}
+
+		DatabaseManager::instance().updateJobStatus(jobId, ok ? "done" : "failed", ok ? 0 : -1, log);
+
+		QMetaObject::invokeMethod(this, [this, jobId, fileId, ok] {
+			m_finishBusy = false;
+			emit jobFinished(jobId, ok, 0);
+
+			if (ok && fileId > 0)
+				rescanFile(fileId, {});  // picks up renamed sidecars automatically
+
+			if (m_running && !m_paused) runNext();
+		}, Qt::QueuedConnection);
+	});
 }
 
 void JobQueue::rescanFile(qint64 fileId, const QString& filePath, bool triggerReanalysis)
@@ -595,52 +619,77 @@ void JobQueue::commitReview(qint64 jobId)
 	m_reviewSrcPath.clear();
 	m_reviewOrigSize = 0;
 
-	auto& db = DatabaseManager::instance();
+	m_finishBusy = true;
 
-	const bool isInPlace = (finalPath == srcPath);
-	const QFileInfo origFi(srcPath);
-	const QDateTime origCreated  = origFi.birthTime();
-	const QDateTime origModified = origFi.lastModified();
+	// Rename/delete + the DB status update are filesystem/SQL work with no bearing
+	// on this object's own state — run them off the UI thread, same pattern as the
+	// remux-completion path in RemuxJob::onProcessFinished().
+	QThreadPool::globalInstance()->start(
+	    [this, jobId, fileId, tmpPath, finalPath, srcPath, origSize, exitCode]() {
+		auto& db = DatabaseManager::instance();
 
-	qint64 savedBytes = 0;
-	try {
-		const qint64 outputSize = QFileInfo(tmpPath).size();
-		std::filesystem::rename(tmpPath.toStdWString(), finalPath.toStdWString());
+		const bool isInPlace = (finalPath == srcPath);
+		const QFileInfo origFi(srcPath);
+		const QDateTime origCreated  = origFi.birthTime();
+		const QDateTime origModified = origFi.lastModified();
+
+		qint64 savedBytes   = 0;
+		bool   renameFailed = false;
+		try {
+			const qint64 outputSize = QFileInfo(tmpPath).size();
+			std::filesystem::rename(tmpPath.toStdWString(), finalPath.toStdWString());
 #ifdef Q_OS_WIN
-		preserveTimestamps(finalPath, origCreated, origModified);
+			preserveTimestamps(finalPath, origCreated, origModified);
 #endif
-		if (!isInPlace)
-			QFile::remove(srcPath);
-		savedBytes = qMax(0LL, origSize - outputSize);
-	} catch (const std::filesystem::filesystem_error& e) {
-		qWarning() << "JobQueue::commitReview: rename failed:" << e.what();
-		db.updateJobStatus(jobId, "failed", -2);
-		emit jobFinished(jobId, false, 0);
-		return;
-	}
-
-	db.updateJobStatus(jobId, "done", exitCode);
-	if (savedBytes > 0) {
-		db.updateJobSavedBytes(jobId, savedBytes);
-		db.updateCalibrationFromJob(jobId);
-		auto& settings = AppSettings::instance();
-		const qint64 prev = settings.value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
-		settings.setValue(QStringLiteral("stats/totalReclaimedBytes"), prev + savedBytes);
-	}
-
-	emit jobFinished(jobId, true, savedBytes);
-
-	if (fileId > 0) {
-		deleteMergedSidecars(jobId);
-		if (!isInPlace) {
-			const QFileInfo fi(finalPath);
-			db.updateFilePath(fileId, finalPath, fi.fileName());
+			if (!isInPlace)
+				QFile::remove(srcPath);
+			savedBytes = qMax(0LL, origSize - outputSize);
+		} catch (const std::filesystem::filesystem_error& e) {
+			qWarning() << "JobQueue::commitReview: rename failed:" << e.what();
+			db.updateJobStatus(jobId, "failed", -2);
+			renameFailed = true;
 		}
-		rescanFile(fileId, {});
-	}
 
-	if (m_running)
-		runNext();
+		if (renameFailed) {
+			QMetaObject::invokeMethod(this, [this, jobId] {
+				m_finishBusy = false;
+				emit jobFinished(jobId, false, 0);
+			}, Qt::QueuedConnection);
+			return;
+		}
+
+		db.updateJobStatus(jobId, "done", exitCode);
+		if (savedBytes > 0) {
+			db.updateJobSavedBytes(jobId, savedBytes);
+			db.updateCalibrationFromJob(jobId);
+		}
+
+		QMetaObject::invokeMethod(this, [this, jobId, fileId, finalPath, isInPlace, savedBytes] {
+			m_finishBusy = false;
+
+			// AppSettings is a plain in-memory store with no locking — only ever
+			// touch it from the UI thread.
+			if (savedBytes > 0) {
+				auto& settings = AppSettings::instance();
+				const qint64 prev = settings.value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
+				settings.setValue(QStringLiteral("stats/totalReclaimedBytes"), prev + savedBytes);
+			}
+
+			emit jobFinished(jobId, true, savedBytes);
+
+			if (fileId > 0) {
+				deleteMergedSidecars(jobId);
+				if (!isInPlace) {
+					const QFileInfo fi(finalPath);
+					DatabaseManager::instance().updateFilePath(fileId, finalPath, fi.fileName());
+				}
+				rescanFile(fileId, {});
+			}
+
+			if (m_running)
+				runNext();
+		}, Qt::QueuedConnection);
+	});
 }
 
 void JobQueue::rejectReview(qint64 jobId, bool reanalyze)
