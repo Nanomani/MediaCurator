@@ -194,6 +194,17 @@ protected:
 	}
 };
 
+static QString formatEtaDuration(double secs)
+{
+	const int totalSec = qMax(1, static_cast<int>(secs));
+	const int h = totalSec / 3600;
+	const int m = (totalSec % 3600) / 60;
+	const int s = totalSec % 60;
+	if (h > 0) return QStringLiteral("%1h %2m").arg(h).arg(m);
+	if (m > 0) return QStringLiteral("%1m %2s").arg(m).arg(s);
+	return QStringLiteral("%1s").arg(s);
+}
+
 static QFrame* vSep(QWidget* parent)
 {
 	auto* f = new QFrame(parent);
@@ -1730,7 +1741,8 @@ void McJobPanel::updateFooter()
 				const double bytesPerMs = fileSize > 0 ? fileSize * ratePerMs / 100.0 : 0.0;
 
 				if (ratePerMs > 0.0) {
-					double etaSec = (100.0 - progress) / ratePerMs / 1000.0;
+					const double fileEtaSec = (100.0 - progress) / ratePerMs / 1000.0;
+					double queueEtaSec = fileEtaSec;
 
 					// Extend with queued jobs using the current byte rate
 					if (bytesPerMs > 0 && queued > 0) {
@@ -1740,18 +1752,18 @@ void McJobPanel::updateFooter()
 							if (qi.data(McJobListModel::StatusRole).toString() == QLatin1String("queued"))
 								queuedBytes += qi.data(McJobListModel::FileSizeRole).toLongLong();
 						}
-						etaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
+						queueEtaSec += static_cast<double>(queuedBytes) / (bytesPerMs * 1000.0);
 					}
 
-					const int totalSec = qMax(1, static_cast<int>(etaSec));
-					const int h = totalSec / 3600;
-					const int m = (totalSec % 3600) / 60;
-					const int s = totalSec % 60;
-					QString etaStr;
-					if (h > 0)      etaStr = QStringLiteral("%1h %2m").arg(h).arg(m);
-					else if (m > 0) etaStr = QStringLiteral("%1m %2s").arg(m).arg(s);
-					else            etaStr = QStringLiteral("%1s").arg(s);
-					text += tr(" · ~%1 remaining").arg(etaStr);
+					// With more than one file involved, the whole-queue ETA alone hides
+					// how far along the current file is — show both. With just one file,
+					// they're the same number, so show it once.
+					if (queued > 0) {
+						text += tr(" · ~%1 remaining (this file)").arg(formatEtaDuration(fileEtaSec));
+						text += tr(" · ~%1 remaining (queue)").arg(formatEtaDuration(queueEtaSec));
+					} else {
+						text += tr(" · ~%1 remaining").arg(formatEtaDuration(fileEtaSec));
+					}
 
 					if (bytesPerMs > 0) {
 						const double mbPerSec = bytesPerMs * 1000.0 / 1048576.0;

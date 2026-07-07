@@ -6,10 +6,12 @@
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPainter>
 #include <QPalette>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+#include <QtMath>
 
 namespace Mc {
 
@@ -40,6 +42,30 @@ QLabel* sampleBadge(QWidget* parent, const QString& text, const QString& codecTy
 	auto* lbl = new QLabel(parent);
 	lbl->setPixmap(McCardDelegate::badgePixmap(text, codecType, parent->font(),
 	                                           parent->devicePixelRatioF(), flagLang));
+	return lbl;
+}
+
+// Static sample of the Job Queue card's live size bar (McCardDelegate), showing what a
+// finished job with a given savings percentage looks like: green (mkvmerge progress,
+// complete) fills the full width, blue (output bytes vs. original size) sits on top and
+// stops short by the saved fraction, exposing a green sliver at the end.
+QLabel* sizeBarSample(QWidget* parent, int width, int height, double savedFraction)
+{
+	const qreal dpr = parent->devicePixelRatioF();
+	QPixmap pm(qCeil(width * dpr), qCeil(height * dpr));
+	pm.setDevicePixelRatio(dpr);
+	pm.fill(Qt::transparent);
+
+	QPainter p(&pm);
+	p.fillRect(QRect(0, 0, width, height), QColor(0x30, 0x30, 0x40));
+	p.fillRect(QRect(0, 0, width, height), QColor(0x5a, 0xe8, 0x5a));
+	const int keptW = qRound(width * (1.0 - savedFraction));
+	p.fillRect(QRect(0, 0, keptW, height), QColor(0x64, 0xb4, 0xf0));
+	p.end();
+
+	auto* lbl = new QLabel(parent);
+	lbl->setPixmap(pm);
+	lbl->setFixedSize(width, height);
 	return lbl;
 }
 
@@ -112,8 +138,8 @@ McOnboardingDialog::McOnboardingDialog(QWidget* parent)
 		   "subtitle tracks), your preferred codec order, and how to handle commentary, SDH, "
 		   "and forced subtitles. The movie's original-language audio track is always kept, "
 		   "no matter what you choose."),
-		{ sampleBadge(m_stack, QStringLiteral("H.265"), QStringLiteral("video")),
-		  sampleBadge(m_stack, QStringLiteral("DD+  5.1"), QStringLiteral("audio"), QStringLiteral("eng")),
+		{ sampleBadge(m_stack, QStringLiteral("H.265  3840" "\xC3\x97" "2160  DolbyVision"), QStringLiteral("video")),
+		  sampleBadge(m_stack, QStringLiteral("Atmos  7.1"), QStringLiteral("audio"), QStringLiteral("eng")),
 		  sampleBadge(m_stack, QStringLiteral("SRT"), QStringLiteral("subtitle"), QStringLiteral("eng")) }));
 
 	m_stack->addWidget(buildPage(m_stack, iconLabel(m_stack, QStringLiteral(":/icons/playlist_add_check.svg"), 56),
@@ -121,7 +147,8 @@ McOnboardingDialog::McOnboardingDialog(QWidget* parent)
 		tr("Use <b>File → Scan</b> to add a folder or refresh your library. Flagged tracks show "
 		   "up struck-through on each card — see <b>View → Legend</b> for what every badge and "
 		   "icon means. Run <b>Tools → Analyze</b> to preview the savings, then queue the job: "
-		   "the Job Queue panel and status bar track how much space you've reclaimed.")));
+		   "the Job Queue panel and status bar track how much space you've reclaimed."),
+		{ sizeBarSample(m_stack, 220, 3, 0.10) }));
 
 	auto* footer = new QHBoxLayout;
 	footer->setContentsMargins(16, 0, 16, 0);

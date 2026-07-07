@@ -25,6 +25,7 @@ MediaCurator scans your library, identifies which tracks you actually want, and 
 - **"What If" simulation** — Run the rule engine across your entire library without creating any jobs. Preview the number of affected files, tracks to be removed, and estimated GB saved before committing to anything.
 - **Ignore files** — Right-click any card to hide a file from the library (useful for extras and bonus content). Ignored files can be revealed again with a toggle.
 - **Poster art** — Posters are fetched from TMDB automatically when an NFO/IMDb ID is available, or you can double-click the poster column to search and link a movie. Posters are cached locally.
+- **Backdrop art** — Pick a backdrop for any matched movie from a TMDB thumbnail grid; it's cached locally and shown as a dimmed background behind the file card.
 - **IMDb / TMDB integration** — Search TMDB by title, browse results with poster thumbnails, and save the IMDb ID to a Kodi-compatible NFO file alongside the video.
 - **VLC integration** — Play any file directly from the library view.
 - **Dark mode support** — Uses the system colour scheme; icons and UI elements adapt automatically.
@@ -101,7 +102,7 @@ If MediaCurator saves you money on storage or just makes managing your media lib
 
 ## Roadmap
 
-- **Fanart / backdrop selection** — fetch and save backdrop images as `fanart.jpg` for Plex and Kodi
+- **Fanart export to disk** — save the selected backdrop as `fanart.jpg` (Kodi) / `<title>-fanart.jpg` (Plex) next to the movie file, so external media centers pick it up (in-app backdrop selection and card display are already supported)
 - **Job history** — persistent log of all completed jobs, viewable in a separate History tab
 - **Parallel jobs** — configurable worker count (2–4) for faster processing on NAS/RAID setups
 - **Automatic update check** — notify when a new GitHub release is available

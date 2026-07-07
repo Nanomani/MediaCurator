@@ -167,7 +167,7 @@ static QColor pulseBlue(qint64 nowMs)
 
 static QColor pulseRed(qint64 nowMs)
 {
-	return pulseBetween(nowMs, QColor(0xe8, 0x5a, 0x5a), QColor(0x8f, 0x14, 0x14));
+	return pulseBetween(nowMs, QColor(0x5a, 0xe8, 0x5a), QColor(0x14, 0x8f, 0x14));
 }
 
 McCardDelegate::McCardDelegate(Mode mode, QObject* parent)

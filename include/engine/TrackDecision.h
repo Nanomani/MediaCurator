@@ -40,7 +40,7 @@ namespace FallbackBps {
 	constexpr double kTextSubtitle     =     5'000.0; // SRT / ASS / SSA / WebVTT
 } // namespace FallbackBps
 
-    // Returns the effective bitrate used for size estimation:
+// Returns the effective bitrate used for size estimation:
 // declared bitrate when ffprobe provides one, otherwise a FallbackBps constant.
 // Lossless audio codecs (DTS-HD MA, TrueHD, PCM) commonly report no bitrate in MKV.
 inline double effectiveBitrate(const StreamRecord& s) noexcept

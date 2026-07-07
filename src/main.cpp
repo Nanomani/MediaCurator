@@ -169,10 +169,16 @@ static QPixmap buildSplashPixmap(const QString& version)
 		sp.drawText(QRect(STRIP_W, 122, W - STRIP_W * 2, 46),
 		            Qt::AlignHCenter | Qt::AlignVCenter, "MediaCurator");
 
-		constexpr int LW = 52;
+		// Sample of the Job Queue card's live size bar: green (mkvmerge progress,
+		// complete) fills the full width, blue (output bytes vs. original size) sits
+		// on top and stops short by the saved fraction, exposing a green sliver.
+		constexpr int LW = 220, LH = 3;
 		const int lx = (W - LW) / 2;
-		sp.setPen(QPen(QColor(0x55, 0x78, 0xe8, 185), 1.5));
-		sp.drawLine(lx, 172, lx + LW, 172);
+		constexpr int ly = 170;
+		constexpr double kSavedFraction = 0.10;
+		sp.fillRect(lx, ly, LW, LH, QColor(0x30, 0x30, 0x40));
+		sp.fillRect(lx, ly, LW, LH, QColor(0x5a, 0xe8, 0x5a));
+		sp.fillRect(lx, ly, qRound(LW * (1.0 - kSavedFraction)), LH, QColor(0x64, 0xb4, 0xf0));
 	}
 
 	// ── 9. Footer ─────────────────────────────────────────────────────────────
