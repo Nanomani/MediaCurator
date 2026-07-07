@@ -12,15 +12,13 @@ MediaCurator scans your library, identifies which tracks you actually want, and 
 
 ## Screenshots
 
-<!-- TODO: replace with real captures from docs/screenshots/ -->
-
-| Library view | Job queue |
+| Library view | "What If" simulation |
 |---|---|
-| ![Library grid with file cards](docs/screenshots/library-grid.png) | ![Job queue with pending removals](docs/screenshots/job-queue.png) |
+| ![Library grid with file cards](docs/screenshots/library-grid.png) | ![What If dry-run results](docs/screenshots/what-if.png) |
 
-| Rule engine | "What If" simulation |
+| Job queue | Done jobs — space reclaimed |
 |---|---|
-| ![Rule editor](docs/screenshots/rule-editor.png) | ![What If dry-run results](docs/screenshots/what-if.png) |
+| ![Job queue with pending removals](docs/screenshots/job-queue.png) | ![Completed job queue showing space saved per file](docs/screenshots/job-queue-done.png) |
 
 ## Features
 
@@ -54,6 +52,7 @@ Hard drives are not cheap. A 16 TB NAS drive for home media storage costs upward
 |------|------|-------|
 | ffprobe | Stream analysis | Bundled |
 | mkvmerge | Lossless remux | Bundled |
+| mkvpropedit | Flag/tag edits without remux | Bundled |
 | VLC | In-app playback | Optional — auto-detected if installed |
 
 For a TMDB API key (free), visit [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api). Enter it in **Settings** to enable poster art and movie search. The app works without it.
@@ -94,7 +93,9 @@ After building, place the tool binaries alongside the executable:
   tools/
     windows/
       ffprobe.exe
-      mkvmerge.exe
+      mkvtoolnix/
+        mkvmerge.exe
+        mkvpropedit.exe
 ```
 
 See `scripts/setup_tools.ps1` for a script that downloads and places these automatically.

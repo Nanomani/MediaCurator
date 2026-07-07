@@ -507,8 +507,13 @@ ImdbSearchDialog::ImdbSearchDialog(const QString& videoPath,
 	connect(m_btnSave, &QPushButton::clicked,      this, &QDialog::accept);
 	connect(m_btnBox,  &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-	// Auto-search when the dialog opens (if key and title are both available)
-	if (!tmdbApiKey.isEmpty() && !suggestedTitle.isEmpty())
+	// Auto-search when the dialog opens. Prefer a direct lookup by the known IMDb
+	// ID over a folder-name title search — the latter can resolve to the wrong
+	// movie (sequels, remakes, shared titles) even when the correct ID is on file.
+	static const QRegularExpression validExistingId(R"(^tt\d{7,8}$)");
+	if (!tmdbApiKey.isEmpty() && validExistingId.match(existingImdbId).hasMatch())
+		QMetaObject::invokeMethod(this, &ImdbSearchDialog::searchByExistingImdbId, Qt::QueuedConnection);
+	else if (!tmdbApiKey.isEmpty() && !suggestedTitle.isEmpty())
 		QMetaObject::invokeMethod(this, &ImdbSearchDialog::onSearch, Qt::QueuedConnection);
 }
 
@@ -697,187 +702,245 @@ void ImdbSearchDialog::onSearch()
 			return;
 		}
 
-		for (const auto& v : results) {
-			const QJsonObject obj         = v.toObject();
-			const QString     title       = obj["title"].toString();
-			const int         year        = obj["release_date"].toString().left(4).toInt();
-			const int         tmdbId      = obj["id"].toInt();
-			const QString     posterPath   = obj["poster_path"].toString();
-			const QString     backdropPath = obj["backdrop_path"].toString();
-			const QString     origLang    = obj["original_language"].toString();
-			const double      voteAvg     = obj["vote_average"].toDouble();
-			const int         voteCount   = obj["vote_count"].toInt();
+		populateSearchResults(results, yearMatch);
+	});
+}
 
-			const QString display = year > 0
-				? QStringLiteral("%1  (%2)").arg(title).arg(year)
-				: title;
+void ImdbSearchDialog::searchByExistingImdbId()
+{
+	if (m_tmdbApiKey.isEmpty() || m_existingImdbId.isEmpty()) return;
 
-			auto* item = new QListWidgetItem(display, m_resultsList);
-			item->setData(Qt::UserRole,     tmdbId);
-			item->setData(Qt::UserRole + 1, title);
-			item->setData(Qt::UserRole + 2, year);
-			item->setData(Qt::UserRole + 3, posterPath);
-			item->setData(Qt::UserRole + 5, origLang);
-			item->setData(Qt::UserRole + 6, voteAvg);
-			item->setData(Qt::UserRole + 7, voteCount);
-			item->setData(Qt::UserRole + 8, backdropPath);
+	if (m_searchReply) { m_searchReply->abort(); m_searchReply = nullptr; }
+	if (m_extIdsReply) { m_extIdsReply->abort(); m_extIdsReply = nullptr; }
+	for (QNetworkReply* r : m_thumbReplyByRow) r->abort();
+	m_thumbReplyByRow.clear();
+	m_thumbDataByRow.clear();
+	for (QNetworkReply* r : m_backdropReplyByRow) r->abort();
+	m_backdropReplyByRow.clear();
+	for (QNetworkReply* r : m_prefetchByRow) r->abort();
+	m_prefetchByRow.clear();
+	m_imdbIdByRow.clear();
 
-			// Fetch poster thumbnail asynchronously
-			if (!posterPath.isEmpty()) {
-				const QUrl thumbUrl(
-					QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(posterPath));
-				QNetworkRequest thumbReq(thumbUrl);
-				thumbReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
-				QNetworkReply* r = m_nam->get(thumbReq);
-				const int row = m_resultsList->count() - 1;
-				m_thumbReplyByRow[row] = r;
-				connect(r, &QNetworkReply::finished, r, &QObject::deleteLater);
-				connect(r, &QNetworkReply::finished, this, [this, r, row]() {
-					m_thumbReplyByRow.remove(row);
-					if (r->error() == QNetworkReply::NoError) {
-						const QByteArray bytes = r->readAll();
-						QPixmap px;
-						if (px.loadFromData(bytes) && row < m_resultsList->count()) {
-							m_thumbDataByRow[row] = bytes;
-							// Don't overwrite the pre-loaded existing poster icon in the
-							// single-result case — the gallery selection lambda handles updates.
-							if (m_resultsList->count() > 1 || m_existingPosterPath.isEmpty()) {
-								m_resultsList->item(row)->setIcon(
-									QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
-									                Qt::SmoothTransformation)));
-							}
-						}
-					}
-					r->deleteLater();
-				});
-			}
+	m_resultsList->clear();
+	m_btnSearch->setEnabled(false);
 
-			// Fetch backdrop thumbnail asynchronously (w300 is enough for a 10% opacity tint)
-			if (!backdropPath.isEmpty()) {
-				const QUrl bdUrl(
-					QStringLiteral("https://image.tmdb.org/t/p/w300%1").arg(backdropPath));
-				QNetworkRequest bdReq(bdUrl);
-				bdReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
-				QNetworkReply* r = m_nam->get(bdReq);
-				const int row = m_resultsList->count() - 1;
-				m_backdropReplyByRow[row] = r;
-				connect(r, &QNetworkReply::finished, r, &QObject::deleteLater);
-				connect(r, &QNetworkReply::finished, this, [this, r, row]() {
-					m_backdropReplyByRow.remove(row);
-					if (r->error() == QNetworkReply::NoError) {
-						QPixmap px;
-						if (px.loadFromData(r->readAll()) && row < m_resultsList->count()) {
-							// Don't overwrite the pre-loaded existing fanart backdrop in the
-							// single-result case — the gallery selection lambda handles updates.
-							if (m_resultsList->count() > 1 || m_existingFanartPath.isEmpty()) {
-								m_resultsList->item(row)->setData(Qt::UserRole + 9,
-								                                  QVariant::fromValue(px));
-							}
-						}
-					}
-					r->deleteLater();
-				});
-			}
+	QUrlQuery params;
+	params.addQueryItem("api_key",         m_tmdbApiKey);
+	params.addQueryItem("external_source", "imdb_id");
+
+	QUrl url(QStringLiteral("https://api.themoviedb.org/3/find/%1").arg(m_existingImdbId));
+	url.setQuery(params);
+
+	QNetworkRequest req(url);
+	req.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+
+	m_searchReply = m_nam->get(req);
+	connect(m_searchReply, &QNetworkReply::finished, m_searchReply, &QObject::deleteLater);
+	connect(m_searchReply, &QNetworkReply::finished, this, [this]() {
+		auto* reply = qobject_cast<QNetworkReply*>(sender());
+		if (!reply || reply != m_searchReply) return;
+		m_searchReply = nullptr;
+		m_btnSearch->setEnabled(true);
+
+		const QJsonArray results = reply->error() == QNetworkReply::NoError
+		    ? QJsonDocument::fromJson(reply->readAll()).object()["movie_results"].toArray()
+		    : QJsonArray{};
+		reply->deleteLater();
+
+		if (!results.isEmpty()) {
+			populateSearchResults(results, QRegularExpressionMatch{});
+			return;
 		}
 
+		// The known ID didn't resolve on TMDB (removed/merged) or the request
+		// failed — fall back to a title search so the dialog isn't left empty.
+		if (!m_searchEdit->text().trimmed().isEmpty())
+			onSearch();
+	});
+}
 
-		// Prefetch IMDb IDs for all results in parallel
-		for (int row = 0; row < m_resultsList->count(); ++row) {
-			const int tmdbId = m_resultsList->item(row)->data(Qt::UserRole).toInt();
-			QUrlQuery pq;
-			pq.addQueryItem("api_key", m_tmdbApiKey);
-			QUrl pUrl(QStringLiteral("https://api.themoviedb.org/3/movie/%1/external_ids").arg(tmdbId));
-			pUrl.setQuery(pq);
-			QNetworkRequest pReq(pUrl);
-			pReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
-			QNetworkReply* pr = m_nam->get(pReq);
-			m_prefetchByRow[row] = pr;
-			connect(pr, &QNetworkReply::finished, pr, &QObject::deleteLater);
-			connect(pr, &QNetworkReply::finished, this, [this, pr, row]() {
-				m_prefetchByRow.remove(row);
-				const QString id = pr->error() == QNetworkReply::NoError
-				    ? QJsonDocument::fromJson(pr->readAll()).object()["imdb_id"].toString()
-				    : QString{};
+void ImdbSearchDialog::populateSearchResults(const QJsonArray& results, const QRegularExpressionMatch& yearMatch)
+{
+	for (const auto& v : results) {
+		const QJsonObject obj         = v.toObject();
+		const QString     title       = obj["title"].toString();
+		const int         year        = obj["release_date"].toString().left(4).toInt();
+		const int         tmdbId      = obj["id"].toInt();
+		const QString     posterPath   = obj["poster_path"].toString();
+		const QString     backdropPath = obj["backdrop_path"].toString();
+		const QString     origLang    = obj["original_language"].toString();
+		const double      voteAvg     = obj["vote_average"].toDouble();
+		const int         voteCount   = obj["vote_count"].toInt();
 
-				if (!id.isEmpty()) {
-					m_imdbIdByRow[row] = id;
-					if (row < m_resultsList->count())
-						m_resultsList->item(row)->setData(Qt::UserRole + 4, id);
-				}
+		const QString display = year > 0
+			? QStringLiteral("%1  (%2)").arg(title).arg(year)
+			: title;
 
-				if (m_resultsList->currentRow() == row) {
-					m_imdbIdEdit->setEnabled(true);
-					if (!id.isEmpty()) {
-						m_imdbIdEdit->setText(id);
-						if (m_acceptAfterFetch) { m_acceptAfterFetch = false; accept(); }
-					} else {
-						// No IMDb ID available — clear the waiting state so Save isn't stuck disabled.
-						m_acceptAfterFetch = false;
-						m_imdbIdEdit->clear();
-						m_btnSave->setEnabled(false);
+		auto* item = new QListWidgetItem(display, m_resultsList);
+		item->setData(Qt::UserRole,     tmdbId);
+		item->setData(Qt::UserRole + 1, title);
+		item->setData(Qt::UserRole + 2, year);
+		item->setData(Qt::UserRole + 3, posterPath);
+		item->setData(Qt::UserRole + 5, origLang);
+		item->setData(Qt::UserRole + 6, voteAvg);
+		item->setData(Qt::UserRole + 7, voteCount);
+		item->setData(Qt::UserRole + 8, backdropPath);
+
+		// Fetch poster thumbnail asynchronously
+		if (!posterPath.isEmpty()) {
+			const QUrl thumbUrl(
+				QStringLiteral("https://image.tmdb.org/t/p/w92%1").arg(posterPath));
+			QNetworkRequest thumbReq(thumbUrl);
+			thumbReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+			QNetworkReply* r = m_nam->get(thumbReq);
+			const int row = m_resultsList->count() - 1;
+			m_thumbReplyByRow[row] = r;
+			connect(r, &QNetworkReply::finished, r, &QObject::deleteLater);
+			connect(r, &QNetworkReply::finished, this, [this, r, row]() {
+				m_thumbReplyByRow.remove(row);
+				if (r->error() == QNetworkReply::NoError) {
+					const QByteArray bytes = r->readAll();
+					QPixmap px;
+					if (px.loadFromData(bytes) && row < m_resultsList->count()) {
+						m_thumbDataByRow[row] = bytes;
+						// Don't overwrite the pre-loaded existing poster icon in the
+						// single-result case — the gallery selection lambda handles updates.
+						if (m_resultsList->count() > 1 || m_existingPosterPath.isEmpty()) {
+							m_resultsList->item(row)->setIcon(
+								QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
+								                Qt::SmoothTransformation)));
+						}
 					}
-				} else if (m_acceptAfterFetch && id.isEmpty()) {
-					// This row was the auto-select target but is no longer current — give up waiting.
-					m_acceptAfterFetch = false;
 				}
+				r->deleteLater();
 			});
 		}
 
-		if (m_resultsList->count() > 0) {
-			// Pick the result whose year is closest to the searched year.
-			// Falls back to row 0 (TMDB popularity order) if no year was searched.
-			int bestRow = 0;
-			if (yearMatch.hasMatch()) {
-				const int yearSearched = yearMatch.captured(0).toInt();
-				int bestDiff = INT_MAX;
-				for (int i = 0; i < m_resultsList->count(); ++i) {
-					const int rowYear = m_resultsList->item(i)->data(Qt::UserRole + 2).toInt();
-					const int diff    = qAbs(rowYear - yearSearched);
-					if (diff < bestDiff) { bestDiff = diff; bestRow = i; }
-				}
-			}
-			m_resultsList->setCurrentRow(bestRow);
-
-			// When there is exactly one result, pre-populate the mini card with the
-			// current library poster/backdrop so the user sees what they already have
-			// before any TMDB thumbnail arrives (Issue 7).
-			if (m_resultsList->count() == 1
-			    && (!m_existingPosterPath.isEmpty() || !m_existingFanartPath.isEmpty())) {
-				auto* firstItem = m_resultsList->item(0);
-				if (firstItem) {
-					if (!m_existingPosterPath.isEmpty()) {
-						QPixmap px(m_existingPosterPath);
-						if (!px.isNull())
-							firstItem->setIcon(QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
-							                                   Qt::SmoothTransformation)));
-					}
-					if (!m_existingFanartPath.isEmpty()) {
-						QPixmap px(m_existingFanartPath);
-						if (!px.isNull()) {
-							if (px.height() > 300) {
-								const int y = (px.height() - 300) / 2;
-								px = px.copy(0, y, px.width(), 300);
-							}
-							firstItem->setData(Qt::UserRole + 8, m_existingFanartPath);
-							firstItem->setData(Qt::UserRole + 9, QVariant::fromValue(px));
+		// Fetch backdrop thumbnail asynchronously (w300 is enough for a 10% opacity tint)
+		if (!backdropPath.isEmpty()) {
+			const QUrl bdUrl(
+				QStringLiteral("https://image.tmdb.org/t/p/w300%1").arg(backdropPath));
+			QNetworkRequest bdReq(bdUrl);
+			bdReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+			QNetworkReply* r = m_nam->get(bdReq);
+			const int row = m_resultsList->count() - 1;
+			m_backdropReplyByRow[row] = r;
+			connect(r, &QNetworkReply::finished, r, &QObject::deleteLater);
+			connect(r, &QNetworkReply::finished, this, [this, r, row]() {
+				m_backdropReplyByRow.remove(row);
+				if (r->error() == QNetworkReply::NoError) {
+					QPixmap px;
+					if (px.loadFromData(r->readAll()) && row < m_resultsList->count()) {
+						// Don't overwrite the pre-loaded existing fanart backdrop in the
+						// single-result case — the gallery selection lambda handles updates.
+						if (m_resultsList->count() > 1 || m_existingFanartPath.isEmpty()) {
+							m_resultsList->item(row)->setData(Qt::UserRole + 9,
+							                                  QVariant::fromValue(px));
 						}
 					}
 				}
+				r->deleteLater();
+			});
+		}
+	}
+
+
+	// Prefetch IMDb IDs for all results in parallel
+	for (int row = 0; row < m_resultsList->count(); ++row) {
+		const int tmdbId = m_resultsList->item(row)->data(Qt::UserRole).toInt();
+		QUrlQuery pq;
+		pq.addQueryItem("api_key", m_tmdbApiKey);
+		QUrl pUrl(QStringLiteral("https://api.themoviedb.org/3/movie/%1/external_ids").arg(tmdbId));
+		pUrl.setQuery(pq);
+		QNetworkRequest pReq(pUrl);
+		pReq.setHeader(QNetworkRequest::UserAgentHeader, "MediaCurator/1.0");
+		QNetworkReply* pr = m_nam->get(pReq);
+		m_prefetchByRow[row] = pr;
+		connect(pr, &QNetworkReply::finished, pr, &QObject::deleteLater);
+		connect(pr, &QNetworkReply::finished, this, [this, pr, row]() {
+			m_prefetchByRow.remove(row);
+			const QString id = pr->error() == QNetworkReply::NoError
+			    ? QJsonDocument::fromJson(pr->readAll()).object()["imdb_id"].toString()
+			    : QString{};
+
+			if (!id.isEmpty()) {
+				m_imdbIdByRow[row] = id;
+				if (row < m_resultsList->count())
+					m_resultsList->item(row)->setData(Qt::UserRole + 4, id);
 			}
 
-			if (m_autoSelectSingle && m_resultsList->count() == 1) {
-				// Exactly one result — auto-accept once the IMDb ID arrives.
-				const QString cachedId = m_imdbIdByRow.value(bestRow);
-				if (!cachedId.isEmpty()) {
-					m_imdbIdEdit->setText(cachedId);
-					accept();
+			if (m_resultsList->currentRow() == row) {
+				m_imdbIdEdit->setEnabled(true);
+				if (!id.isEmpty()) {
+					m_imdbIdEdit->setText(id);
+					if (m_acceptAfterFetch) { m_acceptAfterFetch = false; accept(); }
 				} else {
-					// IMDb ID still in-flight — accept as soon as the prefetch lands.
-					m_acceptAfterFetch = true;
+					// No IMDb ID available — clear the waiting state so Save isn't stuck disabled.
+					m_acceptAfterFetch = false;
+					m_imdbIdEdit->clear();
+					m_btnSave->setEnabled(false);
+				}
+			} else if (m_acceptAfterFetch && id.isEmpty()) {
+				// This row was the auto-select target but is no longer current — give up waiting.
+				m_acceptAfterFetch = false;
+			}
+		});
+	}
+
+	if (m_resultsList->count() > 0) {
+		// Pick the result whose year is closest to the searched year.
+		// Falls back to row 0 (TMDB popularity order) if no year was searched.
+		int bestRow = 0;
+		if (yearMatch.hasMatch()) {
+			const int yearSearched = yearMatch.captured(0).toInt();
+			int bestDiff = INT_MAX;
+			for (int i = 0; i < m_resultsList->count(); ++i) {
+				const int rowYear = m_resultsList->item(i)->data(Qt::UserRole + 2).toInt();
+				const int diff    = qAbs(rowYear - yearSearched);
+				if (diff < bestDiff) { bestDiff = diff; bestRow = i; }
+			}
+		}
+		m_resultsList->setCurrentRow(bestRow);
+
+		// When there is exactly one result, pre-populate the mini card with the
+		// current library poster/backdrop so the user sees what they already have
+		// before any TMDB thumbnail arrives (Issue 7).
+		if (m_resultsList->count() == 1
+		    && (!m_existingPosterPath.isEmpty() || !m_existingFanartPath.isEmpty())) {
+			auto* firstItem = m_resultsList->item(0);
+			if (firstItem) {
+				if (!m_existingPosterPath.isEmpty()) {
+					QPixmap px(m_existingPosterPath);
+					if (!px.isNull())
+						firstItem->setIcon(QIcon(px.scaled(54, 80, Qt::KeepAspectRatio,
+						                                   Qt::SmoothTransformation)));
+				}
+				if (!m_existingFanartPath.isEmpty()) {
+					QPixmap px(m_existingFanartPath);
+					if (!px.isNull()) {
+						if (px.height() > 300) {
+							const int y = (px.height() - 300) / 2;
+							px = px.copy(0, y, px.width(), 300);
+						}
+						firstItem->setData(Qt::UserRole + 8, m_existingFanartPath);
+						firstItem->setData(Qt::UserRole + 9, QVariant::fromValue(px));
+					}
 				}
 			}
 		}
-	});
+
+		if (m_autoSelectSingle && m_resultsList->count() == 1) {
+			// Exactly one result — auto-accept once the IMDb ID arrives.
+			const QString cachedId = m_imdbIdByRow.value(bestRow);
+			if (!cachedId.isEmpty()) {
+				m_imdbIdEdit->setText(cachedId);
+				accept();
+			} else {
+				// IMDb ID still in-flight — accept as soon as the prefetch lands.
+				m_acceptAfterFetch = true;
+			}
+		}
+	}
 }
 
 void ImdbSearchDialog::keyPressEvent(QKeyEvent* event)

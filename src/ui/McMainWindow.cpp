@@ -180,16 +180,19 @@ protected:
 		QPainter p(this);
 		p.setRenderHint(QPainter::Antialiasing);
 		const QRect r = rect();
+		const bool enabled = isEnabled();
 
 		// Full-row hover fill — always drawn first so the pill sits on top of it
-		if (m_hovered)
+		if (m_hovered && enabled)
 			p.fillRect(r, m_hoverColor);
 
 		// Checked pill: inset 1px top/bottom, 2px left/right — brighter when hovered
 		if (m_checked) {
 			p.setPen(Qt::NoPen);
-			p.setBrush(m_hovered ? m_checkedHoverColor : m_checkedColor);
+			p.setBrush(m_hovered && enabled ? m_checkedHoverColor : m_checkedColor);
+			if (!enabled) p.setOpacity(0.4);
 			p.drawRoundedRect(QRectF(r).adjusted(2.0, 1.0, -2.0, -1.0), 3.0, 3.0);
+			p.setOpacity(1.0);
 		}
 
 		// Icon (16×16, left-aligned with 8px left padding)
@@ -197,20 +200,29 @@ protected:
 		constexpr int kLeftPad = 8;
 		constexpr int kGap     = 5;
 		const QRect iconRect(kLeftPad, (r.height() - kIconW) / 2, kIconW, kIconW);
+		if (!enabled) p.setOpacity(0.4);
 		m_icon.paint(&p, iconRect);
 
 		// Text
-		p.setPen(palette().color(QPalette::Text));
+		p.setPen(palette().color(enabled ? QPalette::Active : QPalette::Disabled, QPalette::Text));
 		p.setFont(font());
 		const QRect textRect = r.adjusted(kLeftPad + kIconW + kGap, 0, -kLeftPad, 0);
 		p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, m_text);
+		if (!enabled) p.setOpacity(1.0);
 	}
 
 	void enterEvent(QEnterEvent*) override { m_hovered = true;  update(); }
 	void leaveEvent(QEvent*)      override { m_hovered = false; update(); }
 
+	void changeEvent(QEvent* e) override
+	{
+		QWidget::changeEvent(e);
+		if (e->type() == QEvent::EnabledChange) update();
+	}
+
 	void mousePressEvent(QMouseEvent* e) override
 	{
+		if (!isEnabled()) return;
 		if (e->button() == Qt::LeftButton) {
 			m_checked = !m_checked;
 			update();
@@ -2192,7 +2204,7 @@ void McMainWindow::onSimulate()
 		if (m_simulateWorker) m_simulateWorker->cancel();
 	});
 
-	// "Analyze Library →" button in results
+	// "Analyze Library" button in results
 	connect(m_whatIfDialog, &McWhatIfDialog::analyzeRequested, this, &McMainWindow::onAnalyzeLibrary);
 
 	m_simulateThread->start();
@@ -2275,9 +2287,13 @@ void McMainWindow::updateJobPanelVisibility(bool forceShow)
 	if (m_actToggleQueue) {
 		QSignalBlocker blocker(m_actToggleQueue);
 		m_actToggleQueue->setChecked(shouldShow);
+		m_actToggleQueue->setEnabled(hasJobs);
 	}
-	if (m_menuQueueBtn)
-		static_cast<McQueueToggle*>(m_menuQueueBtn)->setChecked(shouldShow);
+	if (m_menuQueueBtn) {
+		auto* toggle = static_cast<McQueueToggle*>(m_menuQueueBtn);
+		toggle->setChecked(shouldShow);
+		toggle->setEnabled(hasJobs);
+	}
 
 	if (shouldShow) {
 		const int total = m_splitter->height();

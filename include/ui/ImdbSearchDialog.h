@@ -9,11 +9,13 @@
 class QCloseEvent;
 class QComboBox;
 class QDialogButtonBox;
+class QJsonArray;
 class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QNetworkReply;
+class QRegularExpressionMatch;
 class QSplitter;
 
 namespace Mc {
@@ -59,6 +61,13 @@ public:
 private slots:
 	void onSearch();
 	void onResultSelectionChanged();
+
+private:
+	// Looks the movie up directly by its known IMDb ID via TMDB's /find endpoint.
+	// Preferred over a title search whenever an ID is already on file, since a
+	// folder-name search can match the wrong movie (sequels, remakes, shared titles).
+	void searchByExistingImdbId();
+	void populateSearchResults(const QJsonArray& results, const QRegularExpressionMatch& yearMatch);
 
 protected:
 	void done(int result) override;

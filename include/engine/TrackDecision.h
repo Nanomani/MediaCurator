@@ -36,7 +36,7 @@ namespace FallbackBps {
 	constexpr double kTrueHdPerChannel =   583'333.0; // kTrueHd / 6 — scale by actual channel count
 	constexpr double kPcmDefault       = 4'608'000.0; // PCM fallback: 48 kHz x 24-bit x 4ch
 	constexpr double kFlac             =   880'000.0; // FLAC (lossless, variable)
-	constexpr double kPgsSubtitle      =    11'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher)
+	constexpr double kPgsSubtitle      =     8'000.0; // PGS / VOBSUB (image-based bitmap; forced-only tracks run much lower, full/SDH tracks higher)
 	constexpr double kTextSubtitle     =     5'000.0; // SRT / ASS / SSA / WebVTT
 } // namespace FallbackBps
 

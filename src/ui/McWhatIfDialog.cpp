@@ -270,11 +270,11 @@ McWhatIfDialog::McWhatIfDialog(int totalFiles, QWidget* parent)
 
 	m_cancelBtn  = new QPushButton(tr("Cancel"), btnArea);
 	m_closeBtn   = new QPushButton(tr("Close"),  btnArea);
-	m_analyzeBtn = new QPushButton(tr("Analyze Library →"), btnArea);
+	m_analyzeBtn = new QPushButton(tr("Analyze Library"), btnArea);
 	m_closeBtn->setVisible(false);
 	m_analyzeBtn->setVisible(false);
 
-	// Make "Analyze Library →" the default / highlighted button
+	// Make "Analyze Library" the default / highlighted button
 	m_analyzeBtn->setDefault(true);
 	QPalette ap = m_analyzeBtn->palette();
 	ap.setColor(QPalette::Button, ap.color(QPalette::Highlight));
