@@ -46,6 +46,7 @@ set(MC_SOURCES
     engine/JobQueue.cpp
     engine/RemuxJob.cpp
     engine/PosterManager.cpp
+    engine/SubtitleManager.cpp
     engine/OpenSubtitlesClient.cpp
 
     # Classifier
@@ -81,6 +82,7 @@ set(MC_HEADERS
     ../include/engine/RemuxJob.h
     ../include/engine/TrackDecision.h
     ../include/engine/PosterManager.h
+    ../include/engine/SubtitleManager.h
     ../include/engine/OpenSubtitlesClient.h
 
     # Classifier

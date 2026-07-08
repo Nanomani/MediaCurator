@@ -24,6 +24,7 @@
 #include "ui/McSubtitleDownloadDialog.h"
 #include "ui/McCalibrationDialog.h"
 #include "engine/PosterManager.h"
+#include "engine/SubtitleManager.h"
 #include "engine/RuleEngine.h"
 #include "engine/TrackDecision.h"
 #include "scanner/NfoParser.h"
@@ -284,6 +285,11 @@ McMainWindow::McMainWindow(QWidget* parent)
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			d->setTmdbConfigured(tmdbConfigured);
 		m_jobPanel->setTmdbConfigured(tmdbConfigured);
+		SubtitleManager::instance().setCredentials(m_profile->openSubtitlesApiKey(),
+		                                            m_profile->openSubtitlesUsername(),
+		                                            m_profile->openSubtitlesPassword());
+		SubtitleManager::instance().setEnabled(m_profile->autoDownloadSubtitles());
+		SubtitleManager::instance().setUnderstoodLanguages(m_profile->understoodLanguages());
 	});
 
 	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
@@ -322,6 +328,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			d->invalidateSizeCacheFor(fid);
 		PosterManager::instance().enqueue(fid);
+		SubtitleManager::instance().enqueue(fid);
 	});
 	// After a track-mismatch re-analyze rescan completes, auto-analyze just that file
 	// so the user doesn't have to manually click Analyze Library.
@@ -449,6 +456,24 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onImdbIdSaved);
 	connect(&pm, &PosterManager::tmdbDataReady,
 	        m_listModel, &McFileListModel::onTmdbDataReady);
+
+	// ── Subtitle manager ──────────────────────────────────────────────────────
+	auto& sm = SubtitleManager::instance();
+	sm.start(m_profile->openSubtitlesApiKey(), m_profile->openSubtitlesUsername(),
+	         m_profile->openSubtitlesPassword(), m_profile->autoDownloadSubtitles(),
+	         m_profile->understoodLanguages());
+	connect(&sm, &SubtitleManager::subtitlesReady, this, [this](qint64 fileId, int downloaded) {
+		m_listModel->reloadFile(fileId);
+		m_jobPanel->refresh();
+		const auto fileOpt = DatabaseManager::instance().fileById(fileId);
+		m_statusLabel->setText(
+			tr("Downloaded %1 subtitle(s) for %2").arg(downloaded)
+				.arg(fileOpt ? fileOpt->filename : QString::number(fileId)));
+	});
+	connect(&sm, &SubtitleManager::quotaExhausted, this, [this] {
+		m_statusLabel->setText(
+			tr("OpenSubtitles daily download quota reached — automatic subtitle downloads paused."));
+	});
 
 	// ── Update checker ────────────────────────────────────────────────────────
 	connect(&UpdateChecker::instance(), &UpdateChecker::updateAvailable,
@@ -737,22 +762,8 @@ void McMainWindow::setupUi()
 			// doesn't count as covering its language.
 			const auto streams  = DatabaseManager::instance().streamsForFile(file.id);
 			const auto remaining = streamsRemainingForFile(file.id, streams, m_listModel);
-			QSet<QString> coveredIso6391;
-			for (const auto& s : remaining) {
-				if (s.codecType != QLatin1String("subtitle")) continue;
-				if (s.language.isEmpty() || s.language == QLatin1String("und")) continue;
-				const QString c = Mc::iso6392to6391(s.language);
-				if (!c.isEmpty()) coveredIso6391.insert(c);
-				else if (s.language.length() == 2) coveredIso6391.insert(s.language.toLower());
-			}
-
-			QStringList missingIso6392;
-			for (const QString& lang6392 : m_profile->understoodLanguages()) {
-				if (lang6392 == QLatin1String("mul")) continue;
-				const QString lang6391 = Mc::iso6392to6391(lang6392);
-				if (!lang6391.isEmpty() && !coveredIso6391.contains(lang6391))
-					missingIso6392 << lang6392;
-			}
+			const QStringList missingIso6392 =
+				Mc::missingSubtitleLanguages(remaining, m_profile->understoodLanguages());
 
 			if (missingIso6392.isEmpty()) {
 				QMessageBox::information(this, tr("Download Subtitles"),
@@ -1145,22 +1156,8 @@ void McMainWindow::setupUi()
 
 		const auto streams  = DatabaseManager::instance().streamsForFile(file.id);
 		const auto remaining = streamsRemainingForFile(fileId, streams, m_listModel);
-		QSet<QString> coveredIso6391;
-		for (const auto& s : remaining) {
-			if (s.codecType != QLatin1String("subtitle")) continue;
-			if (s.language.isEmpty() || s.language == QLatin1String("und")) continue;
-			const QString c = Mc::iso6392to6391(s.language);
-			if (!c.isEmpty()) coveredIso6391.insert(c);
-			else if (s.language.length() == 2) coveredIso6391.insert(s.language.toLower());
-		}
-
-		QStringList missingIso6392;
-		for (const QString& lang6392 : m_profile->understoodLanguages()) {
-			if (lang6392 == QLatin1String("mul")) continue;
-			const QString lang6391 = Mc::iso6392to6391(lang6392);
-			if (!lang6391.isEmpty() && !coveredIso6391.contains(lang6391))
-				missingIso6392 << lang6392;
-		}
+		const QStringList missingIso6392 =
+			Mc::missingSubtitleLanguages(remaining, m_profile->understoodLanguages());
 
 		if (missingIso6392.isEmpty()) {
 			QMessageBox::information(this, tr("Download Subtitles"),
@@ -1531,6 +1528,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	}
 
 	PosterManager::instance().stop();
+	SubtitleManager::instance().stop();
 
 	if (m_jobPanel->isVisible()) {
 		const QList<int> sz = m_splitter->sizes();

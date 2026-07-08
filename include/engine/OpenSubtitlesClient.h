@@ -10,6 +10,8 @@ class QNetworkReply;
 
 namespace Mc {
 
+struct StreamRecord;
+
 /**
  * OpenSubtitlesClient — blocking HTTP client for the OpenSubtitles.com REST API v1.
  *
@@ -88,7 +90,8 @@ public slots:
 signals:
 	void languageStarted(QString language);                           // ISO 639-1
 	void languageDone(QString language, bool success, QString message); // ISO 639-1
-	void done(int downloaded, int failed, QString statusMessage);
+	// remaining: OpenSubtitles' reported downloads-left-today, or -1 if unknown.
+	void done(int downloaded, int failed, QString statusMessage, int remaining);
 
 private:
 	QString     m_apiKey, m_username, m_password;
@@ -100,5 +103,11 @@ private:
 // ── ISO 639-2 → ISO 639-1 conversion (shared utility) ────────────────────────
 
 QString iso6392to6391(const QString& iso6392);
+
+// Understood languages (ISO 639-2) with no subtitle coverage among the given streams.
+// A stream covers a language if it's a subtitle track whose language converts to the
+// same ISO 639-1 code. "mul" (multiple/unknown) is never treated as missing.
+QStringList missingSubtitleLanguages(const QList<StreamRecord>& streams,
+                                      const QStringList& understoodLanguages6392);
 
 } // namespace Mc

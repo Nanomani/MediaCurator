@@ -1,6 +1,7 @@
 ﻿#include "scanner/ScanWorker.h"
 #include "core/DatabaseManager.h"
 #include "engine/PosterManager.h"
+#include "engine/SubtitleManager.h"
 #include "scanner/NfoParser.h"
 
 #include <QDateTime>
@@ -189,6 +190,7 @@ void ScanWorker::run()
 				// Enqueue even for unchanged files so PosterManager can backfill
 				// any missing display_title or rating without re-running ffprobe.
 				PosterManager::instance().enqueue(existing->id);
+				SubtitleManager::instance().enqueue(existing->id);
 				return;
 			}
 		}
@@ -242,6 +244,7 @@ void ScanWorker::run()
 
 		// Kick off poster lookup in parallel with the next FFprobe call.
 		PosterManager::instance().enqueue(*fileId);
+		SubtitleManager::instance().enqueue(*fileId);
 	};
 
 	if (m_quickScan) {

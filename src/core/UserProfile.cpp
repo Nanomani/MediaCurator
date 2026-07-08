@@ -169,6 +169,14 @@ void UserProfile::setOpenSubtitlesPassword(const QString& password)
 	}
 }
 
+void UserProfile::setAutoDownloadSubtitles(bool v)
+{
+	if (m_autoDownloadSubtitles != v) {
+		m_autoDownloadSubtitles = v;
+		emit profileChanged();
+	}
+}
+
 void UserProfile::setAudioFormatOrder(const QStringList& order)
 {
 	if (m_audioFormatOrder != order) {
@@ -274,6 +282,7 @@ QJsonObject UserProfile::toJson() const
 	o["opensubtitles_api_key"]           = m_openSubtitlesApiKey;
 	o["opensubtitles_username"]          = m_openSubtitlesUsername;
 	o["opensubtitles_password"]          = m_openSubtitlesPassword;
+	o["auto_download_subtitles"]         = m_autoDownloadSubtitles;
 	return o;
 }
 
@@ -312,6 +321,7 @@ bool UserProfile::fromJson(const QJsonObject& json)
 	m_openSubtitlesApiKey        = json["opensubtitles_api_key"].toString();
 	m_openSubtitlesUsername      = json["opensubtitles_username"].toString();
 	m_openSubtitlesPassword      = json["opensubtitles_password"].toString();
+	m_autoDownloadSubtitles      = json["auto_download_subtitles"].toBool(false);
 
 	if (json.contains("audio_format_order")) {
 		QStringList order;

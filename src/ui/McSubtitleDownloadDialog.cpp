@@ -182,7 +182,8 @@ void McSubtitleDownloadDialog::onLanguageDone(const QString& lang6391,
 	}
 }
 
-void McSubtitleDownloadDialog::onAllDone(int downloaded, int /*failed*/, const QString& /*statusMsg*/)
+void McSubtitleDownloadDialog::onAllDone(int downloaded, int /*failed*/, const QString& /*statusMsg*/,
+                                          int /*remaining*/)
 {
 	m_downloaded = downloaded;
 	m_closeBtn->setEnabled(true);

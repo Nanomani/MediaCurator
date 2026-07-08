@@ -92,6 +92,12 @@ public:
 	void setOpenSubtitlesUsername(const QString& username);
 	void setOpenSubtitlesPassword(const QString& password);
 
+	// Automatically download missing subtitles (for understood languages) in the
+	// background after scanning, mirroring poster/fanart auto-download. Off by
+	// default — OpenSubtitles has a much smaller daily download quota than TMDB.
+	bool autoDownloadSubtitles() const { return m_autoDownloadSubtitles; }
+	void setAutoDownloadSubtitles(bool v);
+
 	// Audio format priority — ordered list of format IDs, best first.
 	// Each ID corresponds to a specific codec variant (e.g. "atmos", "dtshdma").
 	// When multiple tracks of the same language exist, the highest-priority one is kept.
@@ -150,6 +156,7 @@ private:
 	QString     m_openSubtitlesApiKey;
 	QString     m_openSubtitlesUsername;
 	QString     m_openSubtitlesPassword;
+	bool        m_autoDownloadSubtitles   = false;
 	QStringList m_audioFormatOrder      = defaultAudioFormatOrder();
 	QStringList m_disabledAudioFormats  = {};
 	QStringList m_subtitleFormatOrder   = defaultSubtitleFormatOrder();

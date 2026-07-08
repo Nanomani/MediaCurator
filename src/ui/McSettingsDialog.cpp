@@ -411,6 +411,15 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	osPassRow->addWidget(m_editOsPassword, 1);
 	osLayout->addLayout(osPassRow);
 
+	m_chkAutoDownloadSubs = new QCheckBox(
+		tr("Automatically download missing subtitles after scanning"), osGroup);
+	m_chkAutoDownloadSubs->setChecked(profile->autoDownloadSubtitles());
+	m_chkAutoDownloadSubs->setToolTip(
+		tr("Downloads subtitles for your understood languages in the background as\n"
+		   "files are scanned, the same way posters/fanart are fetched automatically.\n"
+		   "Leave off if you'd rather manage your daily OpenSubtitles quota manually."));
+	osLayout->addWidget(m_chkAutoDownloadSubs);
+
 	auto* osHint = new QLabel(
 		tr("Without credentials, up to 100 anonymous downloads per day are available. "
 		   "Add your account for a larger personal quota.\n"
@@ -729,6 +738,7 @@ void McSettingsDialog::accept()
 	m_profile->setOpenSubtitlesApiKey(m_editOsApiKey->text().trimmed());
 	m_profile->setOpenSubtitlesUsername(m_editOsUsername->text().trimmed());
 	m_profile->setOpenSubtitlesPassword(m_editOsPassword->text());
+	m_profile->setAutoDownloadSubtitles(m_chkAutoDownloadSubs->isChecked());
 	m_profile->save();
 
 	AppSettings::instance().setValue("jobPanel/followRunning", m_chkAutoTrack->isChecked());

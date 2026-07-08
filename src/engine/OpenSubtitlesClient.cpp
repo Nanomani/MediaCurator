@@ -14,6 +14,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSet>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -69,6 +70,28 @@ QString iso6392to6391(const QString& iso6392)
 		{"nno","nn"},{"fas","fa"},{"ben","bn"},{"tam","ta"},{"tel","te"},
 	};
 	return map.value(iso6392.toLower());
+}
+
+QStringList missingSubtitleLanguages(const QList<StreamRecord>& streams,
+                                      const QStringList& understoodLanguages6392)
+{
+	QSet<QString> coveredIso6391;
+	for (const auto& s : streams) {
+		if (s.codecType != QLatin1String("subtitle")) continue;
+		if (s.language.isEmpty() || s.language == QLatin1String("und")) continue;
+		const QString c = iso6392to6391(s.language);
+		if (!c.isEmpty()) coveredIso6391.insert(c);
+		else if (s.language.length() == 2) coveredIso6391.insert(s.language.toLower());
+	}
+
+	QStringList missing;
+	for (const QString& lang6392 : understoodLanguages6392) {
+		if (lang6392 == QLatin1String("mul")) continue;
+		const QString lang6391 = iso6392to6391(lang6392);
+		if (!lang6391.isEmpty() && !coveredIso6391.contains(lang6391))
+			missing << lang6392;
+	}
+	return missing;
 }
 
 // ── OpenSubtitlesClient ───────────────────────────────────────────────────────
@@ -385,7 +408,7 @@ void SubtitleDownloadWorker::run()
 		const QString err = QStringLiteral("Login failed: %1").arg(client.lastError());
 		for (const QString& lang : m_languages)
 			emit languageDone(lang, false, err);
-		emit done(0, m_languages.size(), err);
+		emit done(0, m_languages.size(), err, -1);
 		return;
 	}
 	qCDebug(lcOS) << "Login OK";
@@ -452,7 +475,7 @@ void SubtitleDownloadWorker::run()
 		statusMsg += QStringLiteral(" (%1 downloads remaining today)").arg(client.remaining());
 
 	qCDebug(lcOS) << "Done:" << statusMsg;
-	emit done(downloaded, failed, statusMsg);
+	emit done(downloaded, failed, statusMsg, client.remaining());
 }
 
 } // namespace Mc

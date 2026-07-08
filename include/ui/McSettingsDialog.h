@@ -59,6 +59,7 @@ private:
 	QLineEdit*   m_editOsApiKey;
 	QLineEdit*   m_editOsUsername;
 	QLineEdit*   m_editOsPassword;
+	QCheckBox*   m_chkAutoDownloadSubs;
 	QCheckBox*   m_chkAutoTrack;
 };
 
