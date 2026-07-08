@@ -386,6 +386,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	auto* osApiRow   = new QHBoxLayout;
 	auto* osApiLabel = new QLabel(tr("API Key:"), osGroup);
 	m_editOsApiKey   = new QLineEdit(osGroup);
+	m_editOsApiKey->setEchoMode(QLineEdit::Password);
 	m_editOsApiKey->setPlaceholderText(tr("OpenSubtitles.com API key"));
 	m_editOsApiKey->setText(profile->openSubtitlesApiKey());
 	osApiRow->addWidget(osApiLabel);
@@ -528,6 +529,7 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	auto* tmdbRow   = new QHBoxLayout;
 	auto* tmdbLabel = new QLabel(tr("API Key:"), enrichGroup);
 	m_editTmdbKey   = new QLineEdit(enrichGroup);
+	m_editTmdbKey->setEchoMode(QLineEdit::Password);
 	m_editTmdbKey->setPlaceholderText(tr("Leave empty to skip poster lookup"));
 	m_editTmdbKey->setText(profile->tmdbApiKey());
 	tmdbRow->addWidget(tmdbLabel);
