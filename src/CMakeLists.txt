@@ -321,6 +321,31 @@ elseif(APPLE)
         install(DIRECTORY "${CMAKE_SOURCE_DIR}/data/"
             DESTINATION MediaCurator.app/Contents/MacOS/data)
     endif()
+    # Ad-hoc codesign as the LAST step that touches the bundle — adding files
+    # after signing invalidates the signature, so this must run after the
+    # tools/ and data/ copies above. Without any signature at all (which is
+    # what a plain Ninja/clang build produces — Xcode's build system is the
+    # only thing that ad-hoc signs automatically), Gatekeeper refuses to even
+    # launch the app on Apple Silicon once it's downloaded and quarantined,
+    # reporting it as "damaged" instead of the normal unidentified-developer
+    # warning. This is not a substitute for a real Developer ID + notarization
+    # (users still need Right-click > Open / "Open Anyway" once) but it makes
+    # the app launchable at all.
+    find_program(CODESIGN codesign)
+    if(CODESIGN)
+        install(CODE "
+            message(STATUS \"Ad-hoc codesigning MediaCurator.app...\")
+            execute_process(COMMAND
+                \"${CODESIGN}\" --force --deep --sign - \"\${CMAKE_INSTALL_PREFIX}/MediaCurator.app\"
+                RESULT_VARIABLE _codesign_result
+            )
+            if(NOT _codesign_result EQUAL 0)
+                message(FATAL_ERROR \"codesign failed with exit code \${_codesign_result}\")
+            endif()
+        ")
+    else()
+        message(WARNING "codesign not found — MediaCurator.app will be unsigned and may refuse to launch on Apple Silicon after download.")
+    endif()
 else()
     install(TARGETS MediaCurator RUNTIME DESTINATION bin)
     if(EXISTS "${CMAKE_SOURCE_DIR}/tools")
