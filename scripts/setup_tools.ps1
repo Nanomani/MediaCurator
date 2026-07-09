@@ -14,9 +14,14 @@ param([switch]$Force)
 $ErrorActionPreference = "Stop"
 
 # ── Pinned versions ────────────────────────────────────────────────────────────
-#   To upgrade: bump the version + URL, delete tools\windows\, re-run.
-$FFPROBE_VERSION = "release"
-$FFPROBE_URL     = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+#   To upgrade: bump the version + URLs, delete tools\windows\, re-run.
+#   FFPROBE_URLS: gyan.dev rolling "release" first; GitHub mirror is the same
+#   essentials build pinned to FFPROBE_VERSION (fallback when gyan.dev 503s).
+$FFPROBE_VERSION = "8.1.2"
+$FFPROBE_URLS    = @(
+    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    "https://github.com/GyanD/codexffmpeg/releases/download/$FFPROBE_VERSION/ffmpeg-$FFPROBE_VERSION-essentials_build.zip"
+)
 
 $MKV_VERSION     = "88.0"
 $MKV_URL         = "https://mkvtoolnix.download/windows/releases/88.0/mkvtoolnix-64-bit-88.0.7z"
@@ -33,6 +38,39 @@ New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
 Write-Host "MediaCurator - tool setup" -ForegroundColor Cyan
 Write-Host "  Target: $ToolsDir"
 Write-Host ""
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Helper: download with retries and URL fallbacks (gyan.dev often 503s in CI)
+# ──────────────────────────────────────────────────────────────────────────────
+function Invoke-DownloadFile {
+    param(
+        [string[]]$Urls,
+        [string]$OutFile,
+        [int]$MaxRetries = 3,
+        [int]$RetryDelaySec = 10
+    )
+
+    $errors = [System.Collections.Generic.List[string]]::new()
+    foreach ($url in $Urls) {
+        for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+            try {
+                Write-Host "  Downloading from $url (attempt $attempt/$MaxRetries)..."
+                Invoke-WebRequest -Uri $url -OutFile $OutFile -UseBasicParsing
+                return $url
+            } catch {
+                $msg = "$url attempt ${attempt}: $($_.Exception.Message)"
+                $errors.Add($msg) | Out-Null
+                Write-Host "  Failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                if ($attempt -lt $MaxRetries) {
+                    Write-Host "  Retrying in ${RetryDelaySec}s..." -ForegroundColor DarkYellow
+                    Start-Sleep -Seconds $RetryDelaySec
+                }
+            }
+        }
+    }
+
+    throw "All download attempts failed:`n$($errors -join [Environment]::NewLine)"
+}
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  Helper: locate 7-Zip, installing via winget if absent
@@ -56,12 +94,11 @@ function Get-7Zip {
 # ──────────────────────────────────────────────────────────────────────────────
 if ((-not (Test-Path $FfprobeExe)) -or $Force) {
     Write-Host "[ffprobe $FFPROBE_VERSION]" -ForegroundColor White
-    Write-Host "  Downloading from gyan.dev..."
 
     $zipTmp     = Join-Path $env:TEMP "ffmpeg-essentials.zip"
     $extractTmp = Join-Path $env:TEMP "ffmpeg-essentials-extract"
 
-    Invoke-WebRequest -Uri $FFPROBE_URL -OutFile $zipTmp -UseBasicParsing
+    $FFPROBE_URL = Invoke-DownloadFile -Urls $FFPROBE_URLS -OutFile $zipTmp
 
     if (Test-Path $extractTmp) { Remove-Item $extractTmp -Recurse -Force }
     Expand-Archive -Path $zipTmp -DestinationPath $extractTmp -Force
@@ -92,7 +129,7 @@ if ((-not (Test-Path $MkvExe)) -or $Force) {
     $7zTmp      = Join-Path $env:TEMP "mkvtoolnix.7z"
     $extractTmp = Join-Path $env:TEMP "mkvtoolnix-extract"
 
-    Invoke-WebRequest -Uri $MKV_URL -OutFile $7zTmp -UseBasicParsing
+    $MKV_USED_URL = Invoke-DownloadFile -Urls @($MKV_URL) -OutFile $7zTmp
     Write-Host "  Extracting..."
 
     if (Test-Path $extractTmp) { Remove-Item $extractTmp -Recurse -Force }
@@ -125,9 +162,11 @@ if ((-not (Test-Path $MkvExe)) -or $Force) {
 # ──────────────────────────────────────────────────────────────────────────────
 #  3. Version manifest — consumed by CI and CPack to stamp the installer
 # ──────────────────────────────────────────────────────────────────────────────
+if (-not $FFPROBE_URL) { $FFPROBE_URL = $FFPROBE_URLS[0] }
+
 [ordered]@{
-    ffprobe    = @{ version = $FFPROBE_VERSION; url = $FFPROBE_URL }
-    mkvtoolnix = @{ version = $MKV_VERSION;     url = $MKV_URL     }
+    ffprobe    = @{ version = $FFPROBE_VERSION; url = $FFPROBE_URL; fallbacks = $FFPROBE_URLS }
+    mkvtoolnix = @{ version = $MKV_VERSION;     url = $(if ($MKV_USED_URL) { $MKV_USED_URL } else { $MKV_URL }) }
 } | ConvertTo-Json -Depth 3 |
     Set-Content (Join-Path $ToolsDir "versions.json") -Encoding UTF8
 
