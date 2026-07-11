@@ -207,7 +207,7 @@ target_link_libraries(MediaCurator PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(MediaCurator PRIVATE Ole32)
+    target_link_libraries(MediaCurator PRIVATE Ole32 Shell32)
 endif()
 
 qt_add_resources(MediaCurator "mc_resources"

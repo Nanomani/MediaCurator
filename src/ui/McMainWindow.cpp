@@ -72,6 +72,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QProgressDialog>
 #include <QProcess>
 #include <QProgressBar>
 #include <QGuiApplication>
@@ -564,6 +565,12 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        this, &McMainWindow::onUpdateUpToDate);
 	connect(&UpdateChecker::instance(), &UpdateChecker::checkFailed,
 	        this, &McMainWindow::onUpdateCheckFailed);
+	connect(&UpdateChecker::instance(), &UpdateChecker::downloadProgress,
+	        this, &McMainWindow::onUpdateDownloadProgress);
+	connect(&UpdateChecker::instance(), &UpdateChecker::downloadFailed,
+	        this, &McMainWindow::onUpdateDownloadFailed);
+	connect(&UpdateChecker::instance(), &UpdateChecker::installerLaunched,
+	        this, &McMainWindow::onUpdateInstallerLaunched);
 
 	startLibraryLoader();
 }
@@ -3217,7 +3224,8 @@ void McMainWindow::onCheckForUpdates()
 	UpdateChecker::instance().check(/*silent=*/false);
 }
 
-void McMainWindow::onUpdateAvailable(QString version, QString htmlUrl, QString releaseNotes, bool /*silent*/)
+void McMainWindow::onUpdateAvailable(QString version, QString htmlUrl, QString releaseNotes,
+                                      QString installerUrl, bool /*silent*/)
 {
 	m_actCheckUpdates->setEnabled(true);
 
@@ -3228,15 +3236,65 @@ void McMainWindow::onUpdateAvailable(QString version, QString htmlUrl, QString r
 	                .arg(version, QCoreApplication::applicationVersion()));
 	if (!releaseNotes.isEmpty())
 		box.setDetailedText(releaseNotes);
+	QAbstractButton* updateBtn = nullptr;
+	if (!installerUrl.isEmpty())
+		updateBtn = box.addButton(tr("Update Now"), QMessageBox::AcceptRole);
 	auto* viewBtn = box.addButton(tr("View Release"), QMessageBox::ActionRole);
 	auto* skipBtn = box.addButton(tr("Skip This Version"), QMessageBox::DestructiveRole);
 	box.addButton(tr("Remind Me Later"), QMessageBox::RejectRole);
 	box.exec();
 
-	if (box.clickedButton() == viewBtn)
+	if (updateBtn && box.clickedButton() == updateBtn) {
+		m_updateProgressDlg = new QProgressDialog(
+		    tr("Downloading MediaCurator %1…").arg(version),
+		    tr("Cancel"), 0, 100, this);
+		m_updateProgressDlg->setWindowModality(Qt::WindowModal);
+		m_updateProgressDlg->setMinimumDuration(0);
+		m_updateProgressDlg->setAutoClose(false);
+		m_updateProgressDlg->setAutoReset(false);
+		connect(m_updateProgressDlg, &QProgressDialog::canceled, this, [] {
+			UpdateChecker::instance().cancelDownload();
+		});
+		m_updateProgressDlg->show();
+		UpdateChecker::instance().downloadAndInstall(installerUrl);
+	} else if (box.clickedButton() == viewBtn) {
 		QDesktopServices::openUrl(QUrl(htmlUrl));
-	else if (box.clickedButton() == skipBtn)
+	} else if (box.clickedButton() == skipBtn) {
 		UpdateChecker::instance().skipVersion(version);
+	}
+}
+
+void McMainWindow::onUpdateDownloadProgress(qint64 received, qint64 total)
+{
+	if (!m_updateProgressDlg) return;
+	if (total > 0) {
+		m_updateProgressDlg->setMaximum(static_cast<int>(total / 1024));
+		m_updateProgressDlg->setValue(static_cast<int>(received / 1024));
+	}
+}
+
+void McMainWindow::onUpdateDownloadFailed(QString error)
+{
+	if (m_updateProgressDlg) {
+		m_updateProgressDlg->close();
+		m_updateProgressDlg->deleteLater();
+		m_updateProgressDlg = nullptr;
+	}
+	QMessageBox::warning(this, tr("Update Failed"), error);
+}
+
+void McMainWindow::onUpdateInstallerLaunched()
+{
+	if (m_updateProgressDlg) {
+		m_updateProgressDlg->close();
+		m_updateProgressDlg->deleteLater();
+		m_updateProgressDlg = nullptr;
+	}
+	// The elevated installer is starting; close now so it isn't blocked by files
+	// (the .exe itself, DLLs) this process still has open. close() runs the
+	// normal closeEvent cleanup path (stopping SubtitleManager/PosterManager/
+	// JobQueue) and quits the app since this is the last window.
+	close();
 }
 
 void McMainWindow::onUpdateUpToDate(bool silent)

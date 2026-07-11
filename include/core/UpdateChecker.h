@@ -36,18 +36,35 @@ public:
 	// Manual checks ignore the skip list.
 	void skipVersion(const QString& tagName);
 
+	// Download installerUrl (a release asset from updateAvailable's installerUrl
+	// param) and, once complete, launch it elevated with the silent NSIS switch
+	// (/S). Emits installerLaunched() on success — the caller must close the app
+	// immediately afterward so the elevated installer isn't blocked by files this
+	// process still has open. Windows-only; no-op elsewhere.
+	void downloadAndInstall(const QString& installerUrl);
+	void cancelDownload();
+
 signals:
-	void updateAvailable(QString version, QString htmlUrl, QString releaseNotes, bool silent);
+	// installerUrl is the matching Windows installer asset's browser_download_url,
+	// or empty if the release has no such asset (or on non-Windows platforms).
+	void updateAvailable(QString version, QString htmlUrl, QString releaseNotes,
+	                      QString installerUrl, bool silent);
 	void upToDate(bool silent);
 	void checkFailed(QString error, bool silent);
+
+	void downloadProgress(qint64 received, qint64 total);
+	void downloadFailed(QString error);
+	void installerLaunched();
 
 private:
 	explicit UpdateChecker(QObject* parent = nullptr);
 
 	void onReplyFinished(QNetworkReply* reply, bool silent);
+	bool launchInstaller(const QString& path);
 
-	QNetworkAccessManager* m_nam  = nullptr;
-	bool                   m_busy = false;
+	QNetworkAccessManager* m_nam           = nullptr;
+	QNetworkReply*         m_downloadReply = nullptr;
+	bool                   m_busy          = false;
 };
 
 } // namespace Mc

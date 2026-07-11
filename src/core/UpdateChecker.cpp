@@ -3,12 +3,22 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QStandardPaths>
 #include <QVersionNumber>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace Mc {
 
@@ -22,6 +32,20 @@ QVersionNumber parseTag(const QString& tagName)
 	if (t.startsWith(QLatin1Char('v'), Qt::CaseInsensitive))
 		t.remove(0, 1);
 	return QVersionNumber::fromString(t);
+}
+
+// The Windows CI job packages exactly one NSIS installer per release
+// (MediaCurator-<version>-win64.exe) — pick the first .exe asset.
+QString findInstallerUrl(const QJsonObject& release)
+{
+	const QJsonArray assets = release.value(QStringLiteral("assets")).toArray();
+	for (const QJsonValue& v : assets) {
+		const QJsonObject asset = v.toObject();
+		const QString name = asset.value(QStringLiteral("name")).toString();
+		if (name.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive))
+			return asset.value(QStringLiteral("browser_download_url")).toString();
+	}
+	return {};
 }
 } // namespace
 
@@ -95,12 +119,95 @@ void UpdateChecker::onReplyFinished(QNetworkReply* reply, bool silent)
 	emit updateAvailable(tagName,
 	                      obj.value(QStringLiteral("html_url")).toString(),
 	                      obj.value(QStringLiteral("body")).toString(),
+	                      findInstallerUrl(obj),
 	                      silent);
 }
 
 void UpdateChecker::skipVersion(const QString& tagName)
 {
 	AppSettings::instance().setValue("update/skipVersion", tagName);
+}
+
+void UpdateChecker::downloadAndInstall(const QString& installerUrl)
+{
+	if (m_downloadReply || installerUrl.isEmpty())
+		return;
+
+	QNetworkRequest req{QUrl(installerUrl)};
+	req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("MediaCurator"));
+	req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+	                 QNetworkRequest::NoLessSafeRedirectPolicy);
+
+	m_downloadReply = m_nam->get(req);
+	connect(m_downloadReply, &QNetworkReply::downloadProgress,
+	        this, &UpdateChecker::downloadProgress);
+	connect(m_downloadReply, &QNetworkReply::finished, this, [this] {
+		QNetworkReply* reply = m_downloadReply;
+		m_downloadReply = nullptr;
+		reply->deleteLater();
+
+		if (reply->error() != QNetworkReply::NoError) {
+			if (reply->error() != QNetworkReply::OperationCanceledError)
+				emit downloadFailed(reply->errorString());
+			return;
+		}
+
+		const QString assetName = QFileInfo(reply->url().path()).fileName();
+		const QString savePath  = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+		                              .filePath(assetName.isEmpty()
+		                                            ? QStringLiteral("MediaCurator-update.exe")
+		                                            : assetName);
+
+		QFile f(savePath);
+		if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+			emit downloadFailed(tr("Could not save the installer to %1").arg(savePath));
+			return;
+		}
+		f.write(reply->readAll());
+		f.close();
+
+		if (launchInstaller(savePath))
+			emit installerLaunched();
+		// launchInstaller() emits downloadFailed() itself on failure.
+	});
+}
+
+void UpdateChecker::cancelDownload()
+{
+	if (m_downloadReply) m_downloadReply->abort();
+}
+
+bool UpdateChecker::launchInstaller(const QString& path)
+{
+#ifdef Q_OS_WIN
+	SHELLEXECUTEINFOW sei{};
+	sei.cbSize = sizeof(sei);
+	sei.fMask  = SEE_MASK_NOCLOSEPROCESS;
+	// The installer writes to Program Files and touches PATH, so it needs
+	// elevation. Only ShellExecuteEx (not QProcess/CreateProcess) can trigger
+	// the UAC consent prompt for a non-elevated caller.
+	sei.lpVerb = L"runas";
+	const std::wstring filePath = path.toStdWString();
+	sei.lpFile       = filePath.c_str();
+	sei.lpParameters = L"/S"; // fully silent NSIS install — no wizard UI
+	sei.nShow        = SW_SHOWNORMAL;
+
+	if (!ShellExecuteExW(&sei)) {
+		const DWORD err = GetLastError();
+		if (err == ERROR_CANCELLED)
+			emit downloadFailed(tr("Update cancelled — the elevation prompt was declined."));
+		else
+			emit downloadFailed(tr("Could not launch the installer (error %1). "
+			                        "You can run it manually from %2.").arg(err).arg(path));
+		return false;
+	}
+	if (sei.hProcess) CloseHandle(sei.hProcess);
+	return true;
+#else
+	Q_UNUSED(path);
+	emit downloadFailed(tr("Automatic install isn't supported on this platform."));
+	return false;
+#endif
 }
 
 } // namespace Mc

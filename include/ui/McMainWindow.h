@@ -13,6 +13,7 @@
 #include <QTimer>
 
 class QPaintEvent;
+class QProgressDialog;
 class QSplashScreen;
 
 #ifdef Q_OS_WIN
@@ -71,9 +72,13 @@ private slots:
 	void onSimulate();
 	void onSimulateFinished(int analyzed, int filesAffected);
 	void onCheckForUpdates();
-	void onUpdateAvailable(QString version, QString htmlUrl, QString releaseNotes, bool silent);
+	void onUpdateAvailable(QString version, QString htmlUrl, QString releaseNotes,
+	                        QString installerUrl, bool silent);
 	void onUpdateUpToDate(bool silent);
 	void onUpdateCheckFailed(QString error, bool silent);
+	void onUpdateDownloadProgress(qint64 received, qint64 total);
+	void onUpdateDownloadFailed(QString error);
+	void onUpdateInstallerLaunched();
 
 private:
 	void setupUi();
@@ -133,6 +138,7 @@ private:
 	QPushButton*     m_btnCancelScan       = nullptr;
 	QPushButton*     m_btnCancelAnalyze    = nullptr;
 	QPushButton*     m_btnCancelSubtitles  = nullptr;
+	QProgressDialog* m_updateProgressDlg   = nullptr;
 	QSplitter*       m_splitter          = nullptr;
 	struct ScanGroupState {
 		QThread*    thread       = nullptr;
