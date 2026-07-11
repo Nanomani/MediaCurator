@@ -264,7 +264,16 @@ void ScanWorker::run()
 		const auto sidecars  = scanSidecarSubtitles(path, nextSidecarStreamIndex(result.streams));
 		auto allStreams       = result.streams;
 		allStreams.append(sidecars);
-		db.insertStreams(*fileId, allStreams);
+		if (!db.insertStreams(*fileId, allStreams)) {
+			// Rare, but if it happens the file row exists with no streams — the card
+			// looks right this session (fileProcessed below carries the in-memory
+			// data) yet comes back empty after restart. One immediate retry covers
+			// transient contention from concurrent scan/poster/subtitle writers.
+			qWarning() << "ScanWorker: insertStreams failed for" << path << "— retrying once";
+			if (!db.insertStreams(*fileId, allStreams))
+				qCritical() << "ScanWorker: insertStreams failed twice for" << path
+				            << "— tracks will be missing until the next rescan";
+		}
 
 		if (existed) {
 			++updated;

@@ -59,11 +59,18 @@ bool DatabaseManager::open(const QString& dbPath)
 		return false;
 	}
 
-	// Enable WAL mode and foreign keys
+	// Enable WAL mode and foreign keys. busy_timeout matters even in WAL mode:
+	// WAL allows concurrent readers alongside one writer, but the scanner, poster
+	// manager, subtitle manager, and job queue each write from their own thread's
+	// connection — without a busy timeout, a second writer that arrives while
+	// another's transaction is open fails SQLITE_BUSY immediately instead of
+	// waiting, which previously caused insertStreams() to silently fail under
+	// concurrent (multi storage-group) scanning.
 	QSqlQuery pragma(connection());
 	pragma.exec("PRAGMA journal_mode=WAL");
 	pragma.exec("PRAGMA foreign_keys=ON");
 	pragma.exec("PRAGMA synchronous=NORMAL");
+	pragma.exec("PRAGMA busy_timeout=5000");
 
 	if (!initSchema()) {
 		qCritical() << "DatabaseManager: schema init failed";
@@ -106,6 +113,7 @@ QSqlDatabase DatabaseManager::connection() const
 		q.exec("PRAGMA journal_mode=WAL");
 		q.exec("PRAGMA synchronous=NORMAL");
 		q.exec("PRAGMA foreign_keys=ON");
+		q.exec("PRAGMA busy_timeout=5000");
 	}
 	return QSqlDatabase::database(name, false);
 }
@@ -866,11 +874,14 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 			is_hearing_impaired, is_visual_impaired,
 			pixel_format, frame_rate, codec_level, codec_profile, extra_json,
 			is_external, external_path)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	)");
 
-	if (!db.transaction())
+	if (!db.transaction()) {
+		qWarning() << "insertStreams: could not start transaction for file" << fileId
+		           << "—" << db.lastError().text();
 		return false;
+	}
 
 	if (!deleteStreamsOnDb(db, fileId)) {
 		qWarning() << "insertStreams delete failed";
@@ -915,7 +926,12 @@ bool DatabaseManager::insertStreams(qint64 fileId, const QList<StreamRecord>& st
 			return false;
 		}
 	}
-	return db.commit();
+	if (!db.commit()) {
+		qWarning() << "insertStreams: commit failed for file" << fileId
+		           << "—" << db.lastError().text();
+		return false;
+	}
+	return true;
 }
 
 bool DatabaseManager::deleteStreamsForFile(qint64 fileId)
