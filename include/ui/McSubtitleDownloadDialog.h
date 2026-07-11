@@ -25,6 +25,12 @@ public:
 
 	int downloadedCount() const { return m_downloaded; }
 
+public slots:
+	// Overridden so Cancel (or Esc / the window's close box) aborts an in-flight
+	// download instead of destroying the QThread while it's still running — the
+	// dialog actually closes once onAllDone confirms the worker has stopped.
+	void reject() override;
+
 signals:
 	void downloadComplete(int downloaded);
 
@@ -32,7 +38,7 @@ private slots:
 	void onDownload();
 	void onLanguageStarted(const QString& lang6391);
 	void onLanguageDone(const QString& lang6391, bool success, const QString& message);
-	void onAllDone(int downloaded, int failed, const QString& statusMsg, int remaining);
+	void onAllDone(int downloaded, int failed, const QString& statusMsg, int remaining, bool quotaExceeded);
 
 private:
 	static QString languageDisplayName(const QString& iso6392);
@@ -50,6 +56,8 @@ private:
 	QThread*                   m_thread = nullptr;
 	SubtitleDownloadWorker*    m_worker = nullptr;
 	int                        m_downloaded = 0;
+	bool                       m_downloading    = false;
+	bool                       m_closeRequested = false;
 };
 
 } // namespace Mc

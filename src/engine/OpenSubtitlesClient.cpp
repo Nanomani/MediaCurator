@@ -115,6 +115,13 @@ bool OpenSubtitlesClient::isConfigured() const
 	return !m_apiKey.isEmpty();
 }
 
+void OpenSubtitlesClient::cancel()
+{
+	m_cancelled.storeRelaxed(1);
+	if (m_reply)
+		m_reply->abort();
+}
+
 bool OpenSubtitlesClient::ensureLoggedIn()
 {
 	// Token valid for 24 h; reuse if we have one and it is not near expiry.
@@ -211,7 +218,7 @@ bool OpenSubtitlesClient::downloadToFile(int fileId, const QString& savePath)
 
 	QByteArray out;
 	bool ok = false;
-	for (int attempt = 0; attempt < 3 && !ok; ++attempt) {
+	for (int attempt = 0; attempt < 3 && !ok && !m_cancelled.loadRelaxed(); ++attempt) {
 		if (attempt > 0) {
 			qCDebug(lcOS) << "Retry" << attempt << "for /download (last error:" << m_lastError << ")";
 			QEventLoop wait;
@@ -220,8 +227,9 @@ bool OpenSubtitlesClient::downloadToFile(int fileId, const QString& savePath)
 		}
 		ok = httpPost(QStringLiteral("/download"),
 		              QJsonDocument(body).toJson(QJsonDocument::Compact), out);
-		// Don't retry on client errors (4xx); only retry on 5xx / network errors.
-		if (!ok && m_lastStatus >= 400 && m_lastStatus < 500)
+		// Don't retry on client errors (4xx) — including 429, which won't clear up
+		// within this run — or once cancelled; only retry on 5xx / network errors.
+		if (!ok && ((m_lastStatus >= 400 && m_lastStatus < 500) || m_cancelled.loadRelaxed()))
 			break;
 	}
 	if (!ok) return false;
@@ -239,7 +247,7 @@ bool OpenSubtitlesClient::downloadToFile(int fileId, const QString& savePath)
 	// Use a bare fetch — no API-Key/Authorization, no Accept override.
 	QByteArray content;
 	ok = false;
-	for (int attempt = 0; attempt < 3 && !ok; ++attempt) {
+	for (int attempt = 0; attempt < 3 && !ok && !m_cancelled.loadRelaxed(); ++attempt) {
 		if (attempt > 0) {
 			qCDebug(lcOS) << "Retry" << attempt << "fetching content (last error:" << m_lastError << ")";
 			QEventLoop wait;
@@ -247,7 +255,7 @@ bool OpenSubtitlesClient::downloadToFile(int fileId, const QString& savePath)
 			wait.exec();
 		}
 		ok = fetchUrl(QUrl(link), content);
-		if (!ok && m_lastStatus >= 400 && m_lastStatus < 500)
+		if (!ok && ((m_lastStatus >= 400 && m_lastStatus < 500) || m_cancelled.loadRelaxed()))
 			break;
 	}
 	if (!ok) return false;
@@ -266,6 +274,11 @@ bool OpenSubtitlesClient::downloadToFile(int fileId, const QString& savePath)
 
 bool OpenSubtitlesClient::httpPost(const QString& endpoint, const QByteArray& body, QByteArray& out)
 {
+	if (m_cancelled.loadRelaxed()) {
+		m_lastError = QStringLiteral("Cancelled");
+		return false;
+	}
+
 	QUrl url(QStringLiteral("%1%2").arg(QLatin1String(kBaseUrl), endpoint));
 	QNetworkRequest req(url);
 	req.setHeader(QNetworkRequest::ContentTypeHeader, QByteArrayLiteral("application/json"));
@@ -275,6 +288,7 @@ bool OpenSubtitlesClient::httpPost(const QString& endpoint, const QByteArray& bo
 	if (!m_token.isEmpty())
 		req.setRawHeader(QByteArrayLiteral("Authorization"),
 		                 QStringLiteral("Bearer %1").arg(m_token).toUtf8());
+	req.setTransferTimeout(30000); // don't hang forever if the server accepts but never responds
 
 	m_reply = m_nam->post(req, body);
 	{
@@ -288,11 +302,16 @@ bool OpenSubtitlesClient::httpPost(const QString& endpoint, const QByteArray& bo
 	m_reply->deleteLater();
 	m_reply = nullptr;
 
+	if (m_cancelled.loadRelaxed()) {
+		m_lastError = QStringLiteral("Cancelled");
+		return false;
+	}
 	if (m_lastStatus == 0) {
 		m_lastError = QStringLiteral("Network error");
 		return false;
 	}
 	if (m_lastStatus == 429) {
+		m_quotaExceeded = true;
 		m_lastError = QStringLiteral("Rate limit reached — try again later");
 		return false;
 	}
@@ -315,6 +334,11 @@ bool OpenSubtitlesClient::httpPost(const QString& endpoint, const QByteArray& bo
 
 bool OpenSubtitlesClient::httpGet(const QUrl& url, QByteArray& out)
 {
+	if (m_cancelled.loadRelaxed()) {
+		m_lastError = QStringLiteral("Cancelled");
+		return false;
+	}
+
 	QNetworkRequest req(url);
 	req.setRawHeader(QByteArrayLiteral("Accept"),     QByteArrayLiteral("application/json"));
 	req.setRawHeader(QByteArrayLiteral("Api-Key"),    m_apiKey.toUtf8());
@@ -322,6 +346,7 @@ bool OpenSubtitlesClient::httpGet(const QUrl& url, QByteArray& out)
 	if (!m_token.isEmpty())
 		req.setRawHeader(QByteArrayLiteral("Authorization"),
 		                 QStringLiteral("Bearer %1").arg(m_token).toUtf8());
+	req.setTransferTimeout(30000);
 
 	m_reply = m_nam->get(req);
 	{
@@ -335,8 +360,17 @@ bool OpenSubtitlesClient::httpGet(const QUrl& url, QByteArray& out)
 	m_reply->deleteLater();
 	m_reply = nullptr;
 
+	if (m_cancelled.loadRelaxed()) {
+		m_lastError = QStringLiteral("Cancelled");
+		return false;
+	}
 	if (m_lastStatus == 0) {
 		m_lastError = QStringLiteral("Network error");
+		return false;
+	}
+	if (m_lastStatus == 429) {
+		m_quotaExceeded = true;
+		m_lastError = QStringLiteral("Rate limit reached — try again later");
 		return false;
 	}
 	if (m_lastStatus >= 400) {
@@ -350,8 +384,14 @@ bool OpenSubtitlesClient::httpGet(const QUrl& url, QByteArray& out)
 
 bool OpenSubtitlesClient::fetchUrl(const QUrl& url, QByteArray& out)
 {
+	if (m_cancelled.loadRelaxed()) {
+		m_lastError = QStringLiteral("Cancelled");
+		return false;
+	}
+
 	QNetworkRequest req(url);
 	req.setRawHeader(QByteArrayLiteral("User-Agent"), QByteArrayLiteral("MediaCurator/1.0"));
+	req.setTransferTimeout(30000);
 
 	m_reply = m_nam->get(req);
 	{
@@ -365,8 +405,17 @@ bool OpenSubtitlesClient::fetchUrl(const QUrl& url, QByteArray& out)
 	m_reply->deleteLater();
 	m_reply = nullptr;
 
+	if (m_cancelled.loadRelaxed()) {
+		m_lastError = QStringLiteral("Cancelled");
+		return false;
+	}
 	if (m_lastStatus == 0) {
 		m_lastError = QStringLiteral("Network error fetching content");
+		return false;
+	}
+	if (m_lastStatus == 429) {
+		m_quotaExceeded = true;
+		m_lastError = QStringLiteral("Rate limit reached — try again later");
 		return false;
 	}
 	if (m_lastStatus >= 400) {
@@ -396,9 +445,19 @@ SubtitleDownloadWorker::SubtitleDownloadWorker(const QString& apiKey,
 	, m_videoPath(videoPath)
 {}
 
+void SubtitleDownloadWorker::cancel()
+{
+	m_cancelled.storeRelaxed(1);
+	if (m_client)
+		m_client->cancel();
+}
+
 void SubtitleDownloadWorker::run()
 {
 	OpenSubtitlesClient client(m_apiKey, m_username, m_password);
+	m_client = &client;
+	if (m_cancelled.loadRelaxed())
+		client.cancel(); // cancel() arrived before run() started — apply it now
 
 	qCDebug(lcOS) << "SubtitleDownloadWorker::run — imdb:" << m_imdbId
 	              << "languages:" << m_languages << "path:" << m_videoPath;
@@ -408,13 +467,15 @@ void SubtitleDownloadWorker::run()
 		const QString err = QStringLiteral("Login failed: %1").arg(client.lastError());
 		for (const QString& lang : m_languages)
 			emit languageDone(lang, false, err);
-		emit done(0, m_languages.size(), err, -1);
+		emit done(0, m_languages.size(), err, -1, client.quotaExceeded());
+		m_client = nullptr;
 		return;
 	}
 	qCDebug(lcOS) << "Login OK";
 
 	const auto results = client.search(m_imdbId, m_languages);
 	qCDebug(lcOS) << "Search returned" << results.size() << "result(s)";
+	const bool quotaHitOnSearch = client.quotaExceeded();
 
 	QHash<QString, OpenSubtitlesClient::SubtitleFile> resultMap;
 	for (const auto& r : results)
@@ -436,9 +497,23 @@ void SubtitleDownloadWorker::run()
 	// so every language reuses the one JWT obtained above rather than logging
 	// in again on its own thread.
 	for (const QString& lang : m_languages) {
+		if (m_cancelled.loadRelaxed()) {
+			qCDebug(lcOS) << "Cancelled — stopping before" << lang;
+			emit languageDone(lang, false, QStringLiteral("Cancelled"));
+			++failed;
+			continue;
+		}
+
 		if (!resultMap.contains(lang)) {
-			qCDebug(lcOS) << "No result for" << lang;
-			emit languageDone(lang, false, QStringLiteral("Not found on OpenSubtitles.com"));
+			// A 429 during the single /subtitles search call above empties resultMap
+			// for every language — report it as the rate limit it is, not "not found".
+			if (quotaHitOnSearch) {
+				qCDebug(lcOS) << "Quota exceeded — skipping" << lang;
+				emit languageDone(lang, false, QStringLiteral("Rate limit reached — try again later"));
+			} else {
+				qCDebug(lcOS) << "No result for" << lang;
+				emit languageDone(lang, false, QStringLiteral("Not found on OpenSubtitles.com"));
+			}
 			++failed;
 			continue;
 		}
@@ -457,6 +532,17 @@ void SubtitleDownloadWorker::run()
 			qWarning(lcOS) << " " << lang << "failed:" << client.lastError();
 			emit languageDone(lang, false, client.lastError());
 			++failed;
+			// Once the account is rate-limited, every remaining language will fail
+			// the same way — stop hammering the API instead of retrying per-language.
+			if (client.quotaExceeded()) {
+				const int idx = m_languages.indexOf(lang);
+				for (int i = idx + 1; i < m_languages.size(); ++i) {
+					emit languageDone(m_languages.at(i), false,
+					                  QStringLiteral("Rate limit reached — try again later"));
+					++failed;
+				}
+				break;
+			}
 		}
 	}
 
@@ -475,7 +561,8 @@ void SubtitleDownloadWorker::run()
 		statusMsg += QStringLiteral(" (%1 downloads remaining today)").arg(client.remaining());
 
 	qCDebug(lcOS) << "Done:" << statusMsg;
-	emit done(downloaded, failed, statusMsg, client.remaining());
+	emit done(downloaded, failed, statusMsg, client.remaining(), client.quotaExceeded());
+	m_client = nullptr;
 }
 
 } // namespace Mc

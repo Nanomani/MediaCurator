@@ -549,6 +549,13 @@ McMainWindow::McMainWindow(QWidget* parent)
 		m_statusLabel->setText(
 			tr("OpenSubtitles daily download quota reached — automatic subtitle downloads paused."));
 	});
+	connect(&sm, &SubtitleManager::queueActiveChanged, this, [this](bool active) {
+		m_btnCancelSubtitles->setVisible(active);
+		if (active) {
+			m_btnCancelSubtitles->setEnabled(true);
+			m_btnCancelSubtitles->setText(tr("Cancel Subtitle Downloads"));
+		}
+	});
 
 	// ── Update checker ────────────────────────────────────────────────────────
 	connect(&UpdateChecker::instance(), &UpdateChecker::updateAvailable,
@@ -1723,6 +1730,15 @@ void McMainWindow::setupStatusBar()
 		m_btnCancelAnalyze->setText(tr("Cancelling…"));
 	});
 	statusBar()->addPermanentWidget(m_btnCancelAnalyze);
+
+	m_btnCancelSubtitles = new QPushButton(tr("Cancel Subtitle Downloads"), this);
+	m_btnCancelSubtitles->setVisible(false);
+	connect(m_btnCancelSubtitles, &QPushButton::clicked, this, [this] {
+		SubtitleManager::instance().cancelAll();
+		m_btnCancelSubtitles->setEnabled(false);
+		m_btnCancelSubtitles->setText(tr("Cancelling…"));
+	});
+	statusBar()->addPermanentWidget(m_btnCancelSubtitles);
 
 	m_savedLabel = new QLabel(this);
 	m_savedLabel->setVisible(false);

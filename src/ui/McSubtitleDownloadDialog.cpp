@@ -2,6 +2,7 @@
 #include "ui/McCardDelegate.h"
 #include "ui/McLanguageFlags.h"
 #include "engine/OpenSubtitlesClient.h"
+#include "engine/SubtitleManager.h"
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -119,8 +120,8 @@ void McSubtitleDownloadDialog::onDownload()
 {
 	m_downloadBtn->setEnabled(false);
 	m_downloadBtn->hide();
-	m_closeBtn->setEnabled(false);
-	m_closeBtn->setText(tr("Close"));
+	m_downloading = true;
+	// m_closeBtn stays enabled, reading "Cancel", so the user can abort mid-download.
 
 	QStringList iso6391Languages;
 	for (const QString& lang : m_iso6392Languages) {
@@ -183,11 +184,34 @@ void McSubtitleDownloadDialog::onLanguageDone(const QString& lang6391,
 }
 
 void McSubtitleDownloadDialog::onAllDone(int downloaded, int /*failed*/, const QString& /*statusMsg*/,
-                                          int /*remaining*/)
+                                          int /*remaining*/, bool quotaExceeded)
 {
-	m_downloaded = downloaded;
+	m_downloaded  = downloaded;
+	m_downloading = false;
 	m_closeBtn->setEnabled(true);
+	m_closeBtn->setText(tr("Close"));
 	emit downloadComplete(downloaded);
+
+	// A 429 seen here means the account's daily quota is exhausted regardless of
+	// which dialog observed it — pause the background auto-download queue too.
+	if (quotaExceeded)
+		SubtitleManager::instance().reportQuotaExceeded();
+
+	if (m_closeRequested)
+		QDialog::reject();
+}
+
+void McSubtitleDownloadDialog::reject()
+{
+	if (m_downloading) {
+		m_closeRequested = true;
+		if (m_worker)
+			QMetaObject::invokeMethod(m_worker, "cancel", Qt::QueuedConnection);
+		m_closeBtn->setEnabled(false);
+		m_closeBtn->setText(tr("Cancelling…"));
+		return; // dialog actually closes from onAllDone() once the worker stops
+	}
+	QDialog::reject();
 }
 
 } // namespace Mc

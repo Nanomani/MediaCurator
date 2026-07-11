@@ -47,13 +47,26 @@ public:
 	// Batch enqueue — one cross-thread signal for many IDs (e.g. quick-scan backfill).
 	void enqueueBatch(const QList<qint64>& fileIds);
 
+	// User-initiated cancel — drop every queued file and abort whatever is currently
+	// downloading. Unlike stop(), the manager stays running and will pick up newly
+	// enqueued files afterward (mirrors ScanWorker::cancel()/JobQueue::cancel()).
+	void cancelAll();
+
+	// Called when a caller outside the background queue (e.g. the manual
+	// McSubtitleDownloadDialog) observes an HTTP 429, so the shared quota guard
+	// pauses the background queue too instead of only pausing its own dialog.
+	void reportQuotaExceeded();
+
 signals:
 	// A background download wrote new subtitle file(s) for fileId; streams table
 	// has already been updated — listeners only need to refresh their view.
 	void subtitlesReady(qint64 fileId, int downloadedCount);
-	// OpenSubtitles reported zero downloads remaining for the day; the queue is
-	// paused until the app restarts or credentials change.
+	// OpenSubtitles reported zero downloads remaining for the day (or a request came
+	// back HTTP 429); the queue is paused until the app restarts or credentials change.
 	void quotaExhausted();
+	// The queue transitioned between idle and actively processing files — drives the
+	// visibility of a "Cancel Subtitle Downloads" UI affordance.
+	void queueActiveChanged(bool active);
 
 	// Internal — cross-thread commands to the worker.
 	void workerSetCredentials(QString apiKey, QString username, QString password);
@@ -61,6 +74,8 @@ signals:
 	void workerSetUnderstoodLanguages(QStringList languages);
 	void workerEnqueueFile(qint64 fileId);
 	void workerEnqueueBatch(QList<qint64> fileIds);
+	void workerCancelAll();
+	void workerReportQuotaExceeded();
 	void workerStop();
 
 private:

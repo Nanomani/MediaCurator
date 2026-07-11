@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QAtomicInt>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -42,14 +43,25 @@ public:
 	                             QObject* parent = nullptr);
 	~OpenSubtitlesClient() override;
 
-	bool    isConfigured() const;
-	QString lastError()    const { return m_lastError; }
-	int     remaining()    const { return m_remaining; }
+	bool    isConfigured()   const;
+	QString lastError()      const { return m_lastError; }
+	int     remaining()      const { return m_remaining; }
+	// True once any request has come back HTTP 429 — the account's daily quota is
+	// exhausted, so further requests will fail the same way; callers should stop
+	// retrying rather than treating it as an ordinary per-item failure.
+	bool    quotaExceeded()  const { return m_quotaExceeded; }
+	bool    wasCancelled()   const { return m_cancelled.loadRelaxed() != 0; }
 
 	// Blocking — must be called from the thread this object lives on.
 	bool                ensureLoggedIn();
 	QList<SubtitleFile> search(const QString& imdbId, const QStringList& iso639_1Languages);
 	bool                downloadToFile(int fileId, const QString& savePath);
+
+public slots:
+	// Abort whatever request is currently in flight (safe to invoke cross-thread
+	// via a queued connection — it is delivered and processed inside the nested
+	// QEventLoop that httpPost/httpGet/fetchUrl run while blocked).
+	void cancel();
 
 private:
 	bool httpPost(const QString& endpoint, const QByteArray& body, QByteArray& out);
@@ -64,8 +76,10 @@ private:
 	QString m_token;
 	qint64  m_tokenExpiry = 0;
 	QString m_lastError;
-	int     m_remaining   = -1;
-	int     m_lastStatus  = 0;
+	int     m_remaining      = -1;
+	int     m_lastStatus     = 0;
+	bool    m_quotaExceeded  = false;
+	QAtomicInt m_cancelled{0};
 
 	static constexpr const char* kBaseUrl = "https://api.opensubtitles.com/api/v1";
 };
@@ -86,18 +100,26 @@ public:
 
 public slots:
 	void run();
+	// Abort the in-flight request (if any) and stop before starting the next
+	// language. Safe to call cross-thread — forwarded to OpenSubtitlesClient::cancel(),
+	// which is itself safe to invoke while run() is blocked in its nested event loop.
+	void cancel();
 
 signals:
 	void languageStarted(QString language);                           // ISO 639-1
 	void languageDone(QString language, bool success, QString message); // ISO 639-1
 	// remaining: OpenSubtitles' reported downloads-left-today, or -1 if unknown.
-	void done(int downloaded, int failed, QString statusMessage, int remaining);
+	// quotaExceeded: an HTTP 429 was seen — the account is rate-limited, not just
+	// this run's languages failing individually.
+	void done(int downloaded, int failed, QString statusMessage, int remaining, bool quotaExceeded);
 
 private:
 	QString     m_apiKey, m_username, m_password;
 	QString     m_imdbId;
 	QStringList m_languages;
 	QString     m_videoPath;
+	QAtomicInt         m_cancelled{0};
+	OpenSubtitlesClient* m_client = nullptr; // valid only while run() is executing
 };
 
 // ── ISO 639-2 → ISO 639-1 conversion (shared utility) ────────────────────────

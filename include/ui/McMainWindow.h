@@ -130,8 +130,9 @@ private:
 	QLabel*          m_statusLabel  = nullptr;
 	QLabel*          m_savedLabel   = nullptr;
 	QProgressBar*    m_progressBar  = nullptr;
-	QPushButton*     m_btnCancelScan     = nullptr;
-	QPushButton*     m_btnCancelAnalyze  = nullptr;
+	QPushButton*     m_btnCancelScan       = nullptr;
+	QPushButton*     m_btnCancelAnalyze    = nullptr;
+	QPushButton*     m_btnCancelSubtitles  = nullptr;
 	QSplitter*       m_splitter          = nullptr;
 	struct ScanGroupState {
 		QThread*    thread       = nullptr;

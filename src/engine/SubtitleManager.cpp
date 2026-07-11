@@ -30,7 +30,23 @@ public slots:
 	void stop()
 	{
 		m_stopping = true;
+		if (m_currentDl) m_currentDl->cancel();
 		if (m_timer) m_timer->stop();
+	}
+
+	void cancelAll()
+	{
+		const bool hadWork = !m_queue.isEmpty() || m_processing;
+		m_queue.clear();
+		if (m_currentDl) m_currentDl->cancel();
+		if (hadWork) emit queueActiveChanged(false);
+	}
+
+	void reportQuotaExceeded()
+	{
+		if (m_quotaExhausted) return;
+		m_quotaExhausted = true;
+		emit quotaExhausted();
 	}
 
 	void setCredentials(QString apiKey, QString username, QString password)
@@ -45,6 +61,7 @@ public slots:
 		m_enabled = enabled;
 		if (m_enabled) m_quotaExhausted = false;   // re-arm the guard
 		startTimerIfWork();
+		if (canRun() && !m_queue.isEmpty()) emit queueActiveChanged(true);
 	}
 
 	void setUnderstoodLanguages(QStringList languages)
@@ -55,24 +72,29 @@ public slots:
 	void enqueueFile(qint64 fileId)
 	{
 		if (m_stopping || fileId <= 0) return;
+		const bool wasEmpty = m_queue.isEmpty() && !m_processing;
 		if (!m_queue.contains(fileId))
 			m_queue.append(fileId);
+		if (wasEmpty && !m_queue.isEmpty() && canRun()) emit queueActiveChanged(true);
 		startTimerIfWork();
 	}
 
 	void enqueueBatch(const QList<qint64>& fileIds)
 	{
 		if (m_stopping || fileIds.isEmpty()) return;
+		const bool wasEmpty = m_queue.isEmpty() && !m_processing;
 		for (qint64 id : fileIds) {
 			if (id > 0 && !m_queue.contains(id))
 				m_queue.append(id);
 		}
+		if (wasEmpty && !m_queue.isEmpty() && canRun()) emit queueActiveChanged(true);
 		startTimerIfWork();
 	}
 
 signals:
 	void subtitlesReady(qint64 fileId, int downloadedCount);
 	void quotaExhausted();
+	void queueActiveChanged(bool active);
 
 private slots:
 	void processNext()
@@ -83,7 +105,11 @@ private slots:
 		// identical concern with TMDB's HTTP calls.
 		if (m_processing) return;
 
-		if (!canRun() || m_queue.isEmpty()) { m_timer->stop(); return; }
+		if (!canRun() || m_queue.isEmpty()) {
+			m_timer->stop();
+			if (m_queue.isEmpty()) emit queueActiveChanged(false);
+			return;
+		}
 
 		m_processing = true;
 		m_timer->stop();
@@ -92,6 +118,7 @@ private slots:
 		m_processing = false;
 		if (!m_stopping)
 			startTimerIfWork();
+		if (m_queue.isEmpty()) emit queueActiveChanged(false);
 	}
 
 private:
@@ -128,18 +155,22 @@ private:
 		if (missing6391.isEmpty()) return;
 
 		int downloaded = 0, remaining = -1;
+		bool quotaHit = false;
 		{
 			// Runs on this worker's own QThread/event loop, same requirement
 			// documented on OpenSubtitlesClient — run() is blocking-style via
 			// QEventLoop, safe to call directly since we're already off the UI thread.
 			SubtitleDownloadWorker dl(m_apiKey, m_username, m_password,
 			                          imdbId, missing6391, file.path);
+			m_currentDl = &dl;
 			connect(&dl, &SubtitleDownloadWorker::done, &dl,
-			        [&downloaded, &remaining](int dlCount, int, QString, int rem) {
+			        [&downloaded, &remaining, &quotaHit](int dlCount, int, QString, int rem, bool quota) {
 				downloaded = dlCount;
 				remaining  = rem;
+				quotaHit   = quota;
 			});
 			dl.run();
+			m_currentDl = nullptr;
 		}
 
 		if (downloaded > 0) {
@@ -154,20 +185,21 @@ private:
 			emit subtitlesReady(fileId, downloaded);
 		}
 
-		if (remaining == 0) {
+		if (remaining == 0 || quotaHit) {
 			m_quotaExhausted = true;
 			emit quotaExhausted();
 		}
 	}
 
-	QTimer*       m_timer = nullptr;
-	QList<qint64> m_queue;
-	QString       m_apiKey, m_username, m_password;
-	QStringList   m_understoodLanguages;
-	bool          m_enabled         = false;
-	bool          m_stopping        = false;
-	bool          m_processing      = false;
-	bool          m_quotaExhausted  = false;
+	QTimer*                 m_timer      = nullptr;
+	QList<qint64>           m_queue;
+	QString                 m_apiKey, m_username, m_password;
+	QStringList             m_understoodLanguages;
+	bool                    m_enabled         = false;
+	bool                    m_stopping        = false;
+	bool                    m_processing      = false;
+	bool                    m_quotaExhausted  = false;
+	SubtitleDownloadWorker* m_currentDl       = nullptr; // valid only mid-processFile()
 };
 
 // ── SubtitleManager ───────────────────────────────────────────────────────────
@@ -198,6 +230,8 @@ void SubtitleManager::start(const QString& apiKey, const QString& username, cons
 	        this,      &SubtitleManager::subtitlesReady);
 	connect(m_worker, &SubtitleWorker::quotaExhausted,
 	        this,      &SubtitleManager::quotaExhausted);
+	connect(m_worker, &SubtitleWorker::queueActiveChanged,
+	        this,      &SubtitleManager::queueActiveChanged);
 
 	connect(this, &SubtitleManager::workerSetCredentials,
 	        m_worker, &SubtitleWorker::setCredentials, Qt::QueuedConnection);
@@ -209,6 +243,10 @@ void SubtitleManager::start(const QString& apiKey, const QString& username, cons
 	        m_worker, &SubtitleWorker::enqueueFile, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerEnqueueBatch,
 	        m_worker, &SubtitleWorker::enqueueBatch, Qt::QueuedConnection);
+	connect(this, &SubtitleManager::workerCancelAll,
+	        m_worker, &SubtitleWorker::cancelAll, Qt::QueuedConnection);
+	connect(this, &SubtitleManager::workerReportQuotaExceeded,
+	        m_worker, &SubtitleWorker::reportQuotaExceeded, Qt::QueuedConnection);
 	connect(this, &SubtitleManager::workerStop,
 	        m_worker, &SubtitleWorker::stop, Qt::QueuedConnection);
 
@@ -255,6 +293,18 @@ void SubtitleManager::enqueueBatch(const QList<qint64>& fileIds)
 {
 	if (fileIds.isEmpty()) return;
 	emit workerEnqueueBatch(fileIds);
+}
+
+void SubtitleManager::cancelAll()
+{
+	if (!m_thread || !m_thread->isRunning()) return;
+	emit workerCancelAll();
+}
+
+void SubtitleManager::reportQuotaExceeded()
+{
+	if (!m_thread || !m_thread->isRunning()) return;
+	emit workerReportQuotaExceeded();
 }
 
 } // namespace Mc
