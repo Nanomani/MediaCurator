@@ -1,0 +1,14 @@
+#pragma once
+// Copy this file to "McHighscoreConfig.local.h" in this same directory.
+// That filename is gitignored — never commit your private code.
+//
+// Get your private code from the same dreamlo.com leaderboard that provided
+// the public code in HighscoreConfig.h ("Create Leaderboard" gives you both).
+// Leaving this file absent (or the code empty) simply disables the
+// leaderboard feature — no build-time or runtime error.
+
+namespace Mc {
+
+inline constexpr const char* kDreamloPrivateCode = "";
+
+} // namespace Mc

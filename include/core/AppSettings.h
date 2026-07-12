@@ -33,6 +33,19 @@ public:
 	QVariant value(const QString& key, const QVariant& defaultValue = {}) const;
 	void     setValue(const QString& key, const QVariant& value);
 
+	// Lifetime "space reclaimed" counter — paired with an HMAC so hand-editing
+	// settings.json to inflate it is detected and punished by zeroing it out.
+	// Not real security (this is open-source, the key is right there in
+	// AppSettings.cpp) — it only stops casually editing the number in a text
+	// editor. reclaimedBytes() self-heals (resets to 0) on a failed check.
+	qint64 reclaimedBytes();
+	void   addReclaimedBytes(qint64 deltaBytes);
+
+	// Re-seeds the counter from a trusted external value (e.g. this player's
+	// last dreamlo-posted score) after the integrity check above reset it to
+	// 0 — so a false positive doesn't permanently erase real history.
+	void restoreReclaimedBytes(qint64 bytesValue);
+
 	// "profile" section — used by UserProfile ─────────────────────────────────
 	QJsonObject profileSection() const;
 	void        setProfileSection(const QJsonObject& obj);

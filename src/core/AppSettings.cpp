@@ -1,13 +1,31 @@
 #include "core/AppSettings.h"
 
+#include <QCryptographicHash>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMessageAuthenticationCode>
 #include <QStandardPaths>
 
 namespace Mc {
+
+namespace {
+// Not a real secret — this is an open-source repo — so this only raises the
+// bar past hand-editing settings.json in a text editor, not a determined
+// tamperer willing to read this file and recompute a matching HMAC.
+constexpr char kReclaimedHmacKey[] = "MediaCurator-reclaimed-v1";
+
+QString reclaimedHmac(qint64 total)
+{
+	QMessageAuthenticationCode mac(QCryptographicHash::Sha256);
+	mac.setKey(QByteArray(kReclaimedHmacKey));
+	mac.addData(QByteArray::number(total));
+	return QString::fromLatin1(mac.result().toHex());
+}
+} // namespace
 
 // ── QVariant ↔ QJsonValue helpers ─────────────────────────────────────────────
 
@@ -121,6 +139,49 @@ void AppSettings::setValue(const QString& key, const QVariant& value)
 	app[key] = variantToJson(value);
 	m_root[QStringLiteral("app")] = app;
 	save();
+}
+
+qint64 AppSettings::reclaimedBytes()
+{
+	const qint64 stored = value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
+	if (stored == 0)
+		return 0;   // nothing to verify yet — avoids migrating/writing an HMAC before any value exists
+
+	// One-time adoption, guarded by its own flag (not just "is the hash
+	// missing") — otherwise tampering by deleting the hash key alongside
+	// editing the value would look identical to legitimate pre-existing data
+	// from before this check existed, every single time. Once this flag is
+	// set, a missing/wrong hash is always treated as tampering, never adopted.
+	const bool migrated = value(QStringLiteral("stats/reclaimedHmacMigrated"), false).toBool();
+	const QString storedHmac = value(QStringLiteral("stats/totalReclaimedBytesHmac")).toString();
+
+	if (!migrated) {
+		setValue(QStringLiteral("stats/totalReclaimedBytesHmac"), reclaimedHmac(stored));
+		setValue(QStringLiteral("stats/reclaimedHmacMigrated"), true);
+		return stored;
+	}
+
+	if (storedHmac != reclaimedHmac(stored)) {
+		qWarning() << "AppSettings: reclaimed-bytes counter failed integrity check — resetting to 0";
+		setValue(QStringLiteral("stats/totalReclaimedBytes"), 0LL);
+		setValue(QStringLiteral("stats/totalReclaimedBytesHmac"), reclaimedHmac(0));
+		return 0;
+	}
+	return stored;
+}
+
+void AppSettings::addReclaimedBytes(qint64 deltaBytes)
+{
+	const qint64 total = reclaimedBytes() + deltaBytes;
+	setValue(QStringLiteral("stats/totalReclaimedBytes"), total);
+	setValue(QStringLiteral("stats/totalReclaimedBytesHmac"), reclaimedHmac(total));
+}
+
+void AppSettings::restoreReclaimedBytes(qint64 bytesValue)
+{
+	setValue(QStringLiteral("stats/totalReclaimedBytes"), bytesValue);
+	setValue(QStringLiteral("stats/totalReclaimedBytesHmac"), reclaimedHmac(bytesValue));
+	setValue(QStringLiteral("stats/reclaimedHmacMigrated"), true);
 }
 
 // ── "profile" section ──────────────────────────────────────────────────────────

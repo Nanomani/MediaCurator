@@ -1,6 +1,9 @@
 # User-local CMake presets (machine-specific paths)
 CMakeUserPresets.json
 
+# dreamlo private leaderboard code (write access) — never commit
+include/engine/McHighscoreConfig.local.h
+
 # Build output
 build/
 out/

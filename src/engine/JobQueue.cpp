@@ -844,9 +844,7 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 	if (ok && savedBytes > 0) {
 		db.updateJobSavedBytes(jobId, savedBytes);
 		db.updateCalibrationFromJob(jobId);
-		auto& settings = AppSettings::instance();
-		const qint64 prev = settings.value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
-		settings.setValue(QStringLiteral("stats/totalReclaimedBytes"), prev + savedBytes);
+		AppSettings::instance().addReclaimedBytes(savedBytes);
 	}
 
 	const QString finalOutput   = remux->finalOutputPath();
@@ -1037,9 +1035,7 @@ void JobQueue::commitReview(qint64 jobId)
 			releaseSlot(storageGroup);
 
 			if (savedBytes > 0) {
-				auto& settings = AppSettings::instance();
-				const qint64 prev = settings.value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
-				settings.setValue(QStringLiteral("stats/totalReclaimedBytes"), prev + savedBytes);
+				AppSettings::instance().addReclaimedBytes(savedBytes);
 			}
 
 			emit jobFinished(jobId, true, savedBytes);

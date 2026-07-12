@@ -12,6 +12,8 @@
 #include <QThread>
 #include <QTimer>
 
+#include "engine/HighscoreClient.h"
+
 class QPaintEvent;
 class QProgressDialog;
 class QSplashScreen;
@@ -27,6 +29,8 @@ class JobQueue;
 class LibraryLoader;
 class McFileListModel;
 class McFilterPanel;
+class McHighscoreBand;
+class McHighscoreDialog;
 class McJobPanel;
 class McWhatIfDialog;
 class SimulateWorker;
@@ -105,6 +109,10 @@ private:
 	void updateActionStates();         // enable/disable scan-lib and analyze based on roots + file count
 	void updateJobPanelVisibility(bool forceShow = false);   // show/hide job panel based on whether any jobs exist
 	void updateRemuxStatusBar();
+	void updateHighscoreVisibility();
+	void submitHighscoreIfDue();
+	void onHighscoreLeaderboardReady(QList<HighscoreEntry> entries);
+	[[nodiscard]] qint64 currentReclaimedMb() const;
 	void launchInVlc(const QString& rawPath);
 	bool analyzeSingleFile(qint64 fileId);
 	void setSubtitleLanguage(const FileRecord& file, const StreamRecord& stream, const QString& langCode);
@@ -125,6 +133,8 @@ private:
 	QAction*  m_actToggleQueue   = nullptr;
 	QWidget*  m_menuQueueBtn     = nullptr;  // view-menu McQueueToggle for the queue toggle
 	QAction*  m_actCheckUpdates  = nullptr;
+	QAction*  m_actToggleHighscore = nullptr;
+	QWidget*  m_menuHighscoreBtn   = nullptr;  // view-menu McQueueToggle for the highscore toggle
 
 	UserProfile*     m_profile      = nullptr;
 	McFileListModel* m_listModel    = nullptr;
@@ -163,6 +173,12 @@ private:
 	int              m_analyzeJobCount     = 0;
 	int              m_savedJobPanelHeight = 0;
 	bool             m_jobPanelPinned     = false;
+	McHighscoreBand*   m_highscoreBand       = nullptr;
+	McHighscoreDialog* m_highscoreDialog     = nullptr;
+	QTimer*            m_highscoreDebounce   = nullptr;
+	bool               m_highscoreBandPinned = false;
+	bool               m_highscoreDeclinedThisSession = false;
+	QList<HighscoreEntry> m_lastHighscoreEntries;
 	bool             m_firstShowDone       = false;
 	bool             m_startupCompleteDone = false;
 	bool             m_splashDismissed     = false;

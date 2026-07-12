@@ -37,6 +37,13 @@ cmake --build --preset local-release
 > { "version": 6, "configurePresets": [{ "name": "local-debug", "inherits": "debug",
 >   "environment": { "Qt6_DIR": "<path>/Qt/6.8.3/msvc2022_64/lib/cmake/Qt6" } }] }
 > ```
+>
+> `include/engine/McHighscoreConfig.local.h` is gitignored (grants dreamlo.com write
+> access for the optional highscore/leaderboard feature). Copy
+> `McHighscoreConfig.local.h.template` in the same folder and fill in your private
+> code, or leave it absent — the leaderboard feature just disables itself. CI writes
+> this file from the `DREAMLO_PRIVATE_CODE` repository secret (Settings → Secrets and
+> variables → Actions).
 
 ## Project Structure
 ```

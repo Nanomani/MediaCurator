@@ -1856,8 +1856,7 @@ void McJobPanel::updateFooter()
 	int total = 0;
 	for (int n : statusCounts) total += n;
 
-	const qint64 savedTotal = AppSettings::instance()
-	    .value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
+	const qint64 savedTotal = AppSettings::instance().reclaimedBytes();
 
 	// Button state — one source of truth
 	m_btnQueueAll->setEnabled(proposed > 0);

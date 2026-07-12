@@ -2,6 +2,8 @@
 #include "core/AppSettings.h"
 #include "ui/ImdbSearchDialog.h"
 #include "ui/McFilterPanel.h"
+#include "ui/McHighscoreBand.h"
+#include "ui/McHighscoreDialog.h"
 #include "ui/McManageFoldersDialog.h"
 #include "ui/SvgIcon.h"
 #include "ui/McCardDelegate.h"
@@ -17,6 +19,7 @@
 #include "ui/McSettingsDialog.h"
 #include "engine/ActionEngine.h"
 #include "engine/AnalyzeWorker.h"
+#include "engine/HighscoreClient.h"
 #include "engine/SimulateWorker.h"
 #include "ui/McWhatIfDialog.h"
 #include "engine/JobQueue.h"
@@ -63,6 +66,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -85,6 +89,7 @@
 #include <QPushButton>
 #include <QStatusBar>
 #include <QColor>
+#include <QDebug>
 #include <QPainter>
 #include <QPalette>
 #include <QToolBar>
@@ -340,6 +345,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 
 	m_savedJobPanelHeight = AppSettings::instance().value("mainWindow/jobPanelHeight", 0).toInt();
 	m_jobPanelPinned     = AppSettings::instance().value("mainWindow/queueHidden",    false).toBool();
+	m_highscoreBandPinned = AppSettings::instance().value("mainWindow/highscoreHidden", false).toBool();
 
 	setupActions();
 	setupUi();
@@ -469,6 +475,23 @@ McMainWindow::McMainWindow(QWidget* parent)
 			m_progressBar->setValue(0);
 		}
 	});
+
+	if (HighscoreClient::instance().isEnabled()) {
+		m_highscoreDebounce = new QTimer(this);
+		m_highscoreDebounce->setSingleShot(true);
+		m_highscoreDebounce->setInterval(5000);   // coalesces bursts (e.g. a bulk job run)
+		connect(m_highscoreDebounce, &QTimer::timeout, this, &McMainWindow::submitHighscoreIfDue);
+
+		connect(m_jobQueue, &JobQueue::jobFinished, this, [this](qint64, bool success, qint64) {
+			if (success)
+				m_highscoreDebounce->start();
+		});
+
+		connect(&HighscoreClient::instance(), &HighscoreClient::leaderboardReady,
+		        this, &McMainWindow::onHighscoreLeaderboardReady);
+		connect(&HighscoreClient::instance(), &HighscoreClient::scoreSubmitted,
+		        this, [](bool ok) { if (ok) HighscoreClient::instance().fetchLeaderboard(); });
+	}
 
 	connect(m_jobQueue, &JobQueue::reviewRequested, this,
 	        [this](qint64 jobId, const QString& filename, const QString& warningText,
@@ -1078,6 +1101,29 @@ void McMainWindow::setupUi()
 	auto* topLayout = new QVBoxLayout(topWidget);
 	topLayout->setContentsMargins(0, 0, 0, 0);
 	topLayout->setSpacing(0);
+
+	if (HighscoreClient::instance().isEnabled()) {
+		m_highscoreBand = new McHighscoreBand(topWidget);
+		m_highscoreBand->setVisible(false);   // hidden until we have data
+		topLayout->addWidget(m_highscoreBand);
+		connect(m_highscoreBand, &McHighscoreBand::clicked, this, [this] {
+			if (!m_highscoreDialog) {
+				m_highscoreDialog = new McHighscoreDialog(
+				    m_lastHighscoreEntries,
+				    AppSettings::instance().value("highscore/playerName").toString(),
+				    this);
+				m_highscoreDialog->setAttribute(Qt::WA_DeleteOnClose);
+				connect(m_highscoreDialog, &QObject::destroyed, this,
+				        [this] { m_highscoreDialog = nullptr; });
+				connect(m_highscoreDialog, &McHighscoreDialog::refreshRequested,
+				        this, [] { HighscoreClient::instance().fetchLeaderboard(); });
+			}
+			m_highscoreDialog->show();
+			m_highscoreDialog->raise();
+			m_highscoreDialog->activateWindow();
+		});
+	}
+
 	topLayout->addWidget(m_filterPanel);
 	topLayout->addWidget(m_listView, 1);
 
@@ -1490,6 +1536,9 @@ void McMainWindow::completeStartup()
 
 	QTimer::singleShot(2000, this, [] { UpdateChecker::instance().check(/*silent=*/true); });
 
+	if (HighscoreClient::instance().isEnabled())
+		HighscoreClient::instance().fetchLeaderboard();
+
 	startBackgroundLibraryLoad();
 }
 
@@ -1560,6 +1609,18 @@ void McMainWindow::setupActions()
 		AppSettings::instance().setValue("mainWindow/queueHidden", m_jobPanelPinned);
 		updateJobPanelVisibility();
 	});
+
+	if (HighscoreClient::instance().isEnabled()) {
+		m_actToggleHighscore = new QAction(tr("Leaderboard"), this);
+		m_actToggleHighscore->setCheckable(true);
+		m_actToggleHighscore->setToolTip(tr("Show / hide the leaderboard band"));
+		m_actToggleHighscore->setIcon(svgIcon(":/icons/star.svg"));
+		connect(m_actToggleHighscore, &QAction::toggled, this, [this](bool checked) {
+			m_highscoreBandPinned = !checked;
+			AppSettings::instance().setValue("mainWindow/highscoreHidden", m_highscoreBandPinned);
+			updateHighscoreVisibility();
+		});
+	}
 }
 
 void McMainWindow::setupToolBar()
@@ -1597,6 +1658,8 @@ void McMainWindow::setupToolBar()
 	tb->addAction(m_actAnalyze);
 	tb->addAction(m_actSimulate);
 	tb->addAction(m_actToggleQueue);
+	if (m_actToggleHighscore)
+		tb->addAction(m_actToggleHighscore);
 	tb->addSeparator();
 	tb->addAction(m_actRefresh);
 
@@ -1648,6 +1711,31 @@ void McMainWindow::setupMenuBar()
 		};
 
 		m_menuQueueBtn = toggle;
+		wa->setDefaultWidget(toggle);
+		viewMenu->addAction(wa);
+	}
+
+	// Leaderboard toggle — same McQueueToggle widget, reused as-is.
+	if (m_actToggleHighscore) {
+		const QColor h   = palette().color(QPalette::Highlight);
+		const QColor hov = h.lighter(175);
+
+		auto* wa     = new QWidgetAction(viewMenu);
+		auto* toggle = new McQueueToggle(
+		    svgIcon(":/icons/star.svg"),
+		    tr("Leaderboard"),
+		    hov,
+		    QColor(h.red(), h.green(), h.blue(), 140),
+		    QColor(h.red(), h.green(), h.blue(), 180),
+		    viewMenu);
+		toggle->setChecked(m_actToggleHighscore->isChecked());
+
+		toggle->onToggled = [this, viewMenu](bool on) {
+			m_actToggleHighscore->setChecked(on);
+			viewMenu->hide();
+		};
+
+		m_menuHighscoreBtn = toggle;
 		wa->setDefaultWidget(toggle);
 		viewMenu->addAction(wa);
 	}
@@ -1835,6 +1923,7 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 
 	AppSettings::instance().setValue("mainWindow/jobPanelHeight", m_savedJobPanelHeight);
 	AppSettings::instance().setValue("mainWindow/queueHidden",    m_jobPanelPinned);
+	AppSettings::instance().setValue("mainWindow/highscoreHidden", m_highscoreBandPinned);
 	AppSettings::instance().setValue("library/sortOrder",         m_filterPanel->sortCombo()->currentData().toInt());
 	event->accept();
 }
@@ -2704,8 +2793,7 @@ void McMainWindow::setScanningState(bool scanning)
 
 void McMainWindow::updateSavedLabel()
 {
-	const qint64 total = AppSettings::instance()
-	    .value(QStringLiteral("stats/totalReclaimedBytes"), 0LL).toLongLong();
+	const qint64 total = AppSettings::instance().reclaimedBytes();
 
 	QString text;
 	if (total > 0) {
@@ -2841,6 +2929,103 @@ void McMainWindow::updateJobPanelVisibility(bool forceShow)
 			m_savedJobPanelHeight = sz[1];
 		m_jobPanel->setVisible(false);
 	}
+}
+
+qint64 McMainWindow::currentReclaimedMb() const
+{
+	return AppSettings::instance().reclaimedBytes() / (1024 * 1024);
+}
+
+void McMainWindow::submitHighscoreIfDue()
+{
+	qint64 mb = currentReclaimedMb();
+	if (mb < 1)
+		return;
+
+	QString name = AppSettings::instance().value("highscore/playerName").toString();
+	if (name.isEmpty()) {
+		if (m_highscoreDeclinedThisSession)
+			return;   // don't nag every debounce firing this run
+		bool ok = false;
+		name = QInputDialog::getText(this, tr("Join the Leaderboard"),
+		    tr("You've reclaimed %1 MB so far!\n"
+		       "Enter a name to appear on MediaCurator's public leaderboard:").arg(mb),
+		    QLineEdit::Normal, QString(), &ok).trimmed();
+		if (!ok || name.isEmpty()) {
+			m_highscoreDeclinedThisSession = true;
+			return;
+		}
+		name.truncate(20);
+		AppSettings::instance().setValue("highscore/playerName", name);
+	}
+
+	// Clamp against this player's last dreamlo-posted score (cached from the
+	// most recent fetch) — generous enough that a legitimate one-time bulk
+	// cleanup still climbs the board, but bounds how far a tampered local
+	// counter can jump the shared leaderboard in a single submission. No
+	// previous entry (first-ever submission) means nothing to clamp against.
+	// Tune upward as real usage data comes in from larger libraries.
+	constexpr qint64 kMaxHighscoreJumpMb = 500LL * 1024;   // 500 GB/submission
+	for (const HighscoreEntry& e : m_lastHighscoreEntries) {
+		if (e.name.compare(name, Qt::CaseInsensitive) == 0) {
+			if (mb > e.score + kMaxHighscoreJumpMb) {
+				qWarning() << "Highscore: clamping implausible jump from" << e.score
+				           << "to" << mb << "MB for" << name;
+				mb = e.score + kMaxHighscoreJumpMb;
+			}
+			break;
+		}
+	}
+
+	HighscoreClient::instance().submitScore(name, mb);
+}
+
+void McMainWindow::onHighscoreLeaderboardReady(QList<HighscoreEntry> entries)
+{
+	m_lastHighscoreEntries = entries;   // already sorted by HighscoreClient
+
+	// Recovery floor: if our local counter reads 0 but we've clearly submitted
+	// under this name before (a name is only ever saved once a real score has
+	// been submitted), the local integrity check most likely reset it as a
+	// false positive — restore from the last value dreamlo has on record
+	// rather than leaving a real user's history erased.
+	const QString name = AppSettings::instance().value("highscore/playerName").toString();
+	if (!name.isEmpty() && AppSettings::instance().reclaimedBytes() == 0) {
+		for (const HighscoreEntry& e : entries) {
+			if (e.name.compare(name, Qt::CaseInsensitive) == 0 && e.score > 0) {
+				AppSettings::instance().restoreReclaimedBytes(e.score * 1024LL * 1024LL);
+				break;
+			}
+		}
+	}
+
+	if (m_highscoreBand)
+		m_highscoreBand->setEntries(entries.mid(0, 5));
+	if (m_highscoreDialog)
+		m_highscoreDialog->setEntries(entries);
+	updateHighscoreVisibility();
+}
+
+void McMainWindow::updateHighscoreVisibility()
+{
+	if (!HighscoreClient::instance().isEnabled())
+		return;   // UI was never created
+
+	const bool hasData    = !m_lastHighscoreEntries.isEmpty();
+	const bool shouldShow = hasData && !m_highscoreBandPinned;
+
+	if (m_actToggleHighscore) {
+		QSignalBlocker blocker(m_actToggleHighscore);
+		m_actToggleHighscore->setChecked(shouldShow);
+		m_actToggleHighscore->setEnabled(hasData);
+	}
+	if (m_menuHighscoreBtn) {
+		auto* toggle = static_cast<McQueueToggle*>(m_menuHighscoreBtn);
+		toggle->setChecked(shouldShow);
+		toggle->setEnabled(hasData);
+	}
+	if (m_highscoreBand)
+		m_highscoreBand->setVisible(shouldShow);
 }
 
 void McMainWindow::launchInVlc(const QString& rawPath)

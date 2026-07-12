@@ -24,6 +24,20 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
+    # Writes the gitignored dreamlo write-key header from a repo secret so the
+    # leaderboard feature is compiled in for official builds. PRs from forks
+    # don't get repo secrets, so DREAMLO_PRIVATE_CODE resolves to an empty
+    # string there — HighscoreClient::isEnabled() then returns false and the
+    # feature silently disables (see include/engine/HighscoreClient.h).
+    - name: Write dreamlo private-code header
+      shell: pwsh
+      env:
+        DREAMLO_PRIVATE_CODE: ${{ secrets.DREAMLO_PRIVATE_CODE }}
+      run: |
+        $code = $env:DREAMLO_PRIVATE_CODE
+        $content = "#pragma once`nnamespace Mc { inline constexpr const char* kDreamloPrivateCode = `"$code`"; }`n"
+        Set-Content -Path include/engine/McHighscoreConfig.local.h -Value $content -NoNewline -Encoding utf8
+
     # Must run before "Configure CMake" — the install() rules for tools/windows/
     # in both cmake/Packaging.cmake and src/CMakeLists.txt are gated on the
     # files already existing at configure time.
@@ -106,6 +120,18 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
+    # See the Windows job's identical step for why this exists — writes the
+    # gitignored dreamlo write-key header from a repo secret (empty on fork
+    # PRs, which just disables the leaderboard feature at compile time).
+    - name: Write dreamlo private-code header
+      env:
+        DREAMLO_PRIVATE_CODE: ${{ secrets.DREAMLO_PRIVATE_CODE }}
+      run: |
+        cat > include/engine/McHighscoreConfig.local.h <<EOF
+        #pragma once
+        namespace Mc { inline constexpr const char* kDreamloPrivateCode = "${DREAMLO_PRIVATE_CODE}"; }
+        EOF
+
     # Must run before "Configure CMake" — src/CMakeLists.txt's install() rule
     # for tools/ (DESTINATION MediaCurator.app/Contents/MacOS/tools) is gated
     # on the files already existing at configure time.
@@ -175,6 +201,18 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v6
+
+    # See the Windows job's identical step for why this exists — writes the
+    # gitignored dreamlo write-key header from a repo secret (empty on fork
+    # PRs, which just disables the leaderboard feature at compile time).
+    - name: Write dreamlo private-code header
+      env:
+        DREAMLO_PRIVATE_CODE: ${{ secrets.DREAMLO_PRIVATE_CODE }}
+      run: |
+        cat > include/engine/McHighscoreConfig.local.h <<EOF
+        #pragma once
+        namespace Mc { inline constexpr const char* kDreamloPrivateCode = "${DREAMLO_PRIVATE_CODE}"; }
+        EOF
 
     - name: Install system dependencies
       run: |

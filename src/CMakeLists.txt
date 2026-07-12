@@ -39,6 +39,8 @@ set(MC_SOURCES
     ui/ImdbSearchDialog.cpp
     ui/McSubtitleDownloadDialog.cpp
     ui/McCalibrationDialog.cpp
+    ui/McHighscoreBand.cpp
+    ui/McHighscoreDialog.cpp
     ui/SvgIcon.cpp
 
     # Engine
@@ -51,6 +53,7 @@ set(MC_SOURCES
     engine/PosterManager.cpp
     engine/SubtitleManager.cpp
     engine/OpenSubtitlesClient.cpp
+    engine/HighscoreClient.cpp
 
     # Classifier
     classifier/RegexClassifier.cpp
@@ -87,6 +90,8 @@ set(MC_HEADERS
     ../include/engine/PosterManager.h
     ../include/engine/SubtitleManager.h
     ../include/engine/OpenSubtitlesClient.h
+    ../include/engine/HighscoreClient.h
+    ../include/engine/HighscoreConfig.h
 
     # Classifier
     ../include/classifier/TrackClassifier.h
@@ -119,6 +124,8 @@ set(MC_HEADERS
     ../include/ui/ImdbSearchDialog.h
     ../include/ui/McSubtitleDownloadDialog.h
     ../include/ui/McCalibrationDialog.h
+    ../include/ui/McHighscoreBand.h
+    ../include/ui/McHighscoreDialog.h
     ../include/ui/SvgIcon.h
     ../include/ui/McFlagRowWidget.h
 )
