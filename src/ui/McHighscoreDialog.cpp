@@ -12,6 +12,16 @@ namespace Mc {
 
 namespace {
 constexpr int kMaxRows = 50;
+
+// Mirrors McMainWindow::updateSavedLabel()'s status-bar formatting so the
+// leaderboard reads in the same units as the rest of the app.
+QString formatReclaimed(qint64 mb)
+{
+	const double gb = mb / 1024.0;
+	return gb >= 1.0
+	    ? QObject::tr("%1 GB").arg(gb, 0, 'f', 2)
+	    : QObject::tr("%1 MB").arg(static_cast<double>(mb), 0, 'f', 1);
+}
 }
 
 McHighscoreDialog::McHighscoreDialog(const QList<HighscoreEntry>& entries,
@@ -27,7 +37,7 @@ McHighscoreDialog::McHighscoreDialog(const QList<HighscoreEntry>& entries,
 
 	m_table = new QTableWidget(this);
 	m_table->setColumnCount(3);
-	m_table->setHorizontalHeaderLabels({ tr("#"), tr("Name"), tr("Reclaimed (MB)") });
+	m_table->setHorizontalHeaderLabels({ tr("#"), tr("Name"), tr("Reclaimed") });
 	m_table->horizontalHeader()->setStretchLastSection(false);
 	m_table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
 	m_table->verticalHeader()->setVisible(false);
@@ -58,7 +68,7 @@ void McHighscoreDialog::rebuildTable(const QList<HighscoreEntry>& entries)
 		const HighscoreEntry& e = shown[row];
 		auto* rankItem  = new QTableWidgetItem(QString::number(row + 1));
 		auto* nameItem  = new QTableWidgetItem(e.name);
-		auto* scoreItem = new QTableWidgetItem(QString::number(e.score));
+		auto* scoreItem = new QTableWidgetItem(formatReclaimed(e.score));
 
 		if (e.name.compare(m_localPlayerName, Qt::CaseInsensitive) == 0) {
 			QFont bold = m_table->font();

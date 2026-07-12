@@ -3,6 +3,7 @@
 #include <QImage>
 #include <QList>
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 class QNetworkAccessManager;
@@ -56,6 +57,16 @@ public:
 	             double voteAverage = 0.0, int voteCount = 0,
 	             const QString& fanartTmdbPath = {});
 
+	// Refresh many files as one tracked batch — merges into an already-active batch
+	// if one is in flight. Drives batchProgressChanged()/batchFinished() so the UI
+	// can show a progress bar + cancel affordance for multi-selection refreshes.
+	void refreshBatch(const QList<qint64>& fileIds);
+
+	// User-initiated cancel — drops every not-yet-started file in the active batch
+	// from the worker queue. A file already mid-download finishes normally (it's a
+	// single quick HTTP round-trip); the manager keeps running afterward.
+	void cancelBatch();
+
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
 	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
@@ -65,6 +76,10 @@ signals:
 	// Fired synchronously inside refresh() as soon as the imdb_id is written to DB,
 	// before any async poster download.  Lets the UI update the IMDb button immediately.
 	void imdbIdSaved(qint64 fileId, QString imdbId);
+
+	// Batch refresh progress — driven by refreshBatch()/cancelBatch().
+	void batchProgressChanged(int done, int total);
+	void batchFinished(int done, int total, bool cancelled);
 
 	// Internal — cross-thread commands to workers.
 	void workerTmdbKeyChanged(QString key);
@@ -84,6 +99,11 @@ private:
 	int                    m_parallelWorkers = 4;
 	QNetworkAccessManager* m_nam           = nullptr;   // main-thread NAM for fast direct fetches
 	QString                m_tmdbApiKey;
+
+	QSet<qint64>           m_batchIds;
+	int                    m_batchTotal  = 0;
+	int                    m_batchDone   = 0;
+	bool                   m_batchActive = false;
 };
 
 } // namespace Mc

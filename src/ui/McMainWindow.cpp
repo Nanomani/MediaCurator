@@ -555,6 +555,22 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onImdbIdSaved);
 	connect(&pm, &PosterManager::tmdbDataReady,
 	        m_listModel, &McFileListModel::onTmdbDataReady);
+	connect(&pm, &PosterManager::batchProgressChanged, this, [this](int done, int total) {
+		m_posterProgressBar->setRange(0, total);
+		m_posterProgressBar->setValue(done);
+		m_posterProgressBar->setVisible(true);
+		m_btnCancelPosterRefresh->setVisible(true);
+		m_btnCancelPosterRefresh->setEnabled(true);
+		m_btnCancelPosterRefresh->setText(tr("Cancel Poster Refresh"));
+		m_statusLabel->setText(tr("Refreshing posters… %1 of %2").arg(done).arg(total));
+	});
+	connect(&pm, &PosterManager::batchFinished, this, [this](int done, int total, bool cancelled) {
+		m_posterProgressBar->setVisible(false);
+		m_btnCancelPosterRefresh->setVisible(false);
+		m_statusLabel->setText(cancelled
+		    ? tr("Poster refresh cancelled after %1 of %2").arg(done).arg(total)
+		    : tr("Refreshed %1 poster(s)").arg(total));
+	});
 
 	// ── Subtitle manager ──────────────────────────────────────────────────────
 	auto& sm = SubtitleManager::instance();
@@ -851,7 +867,10 @@ void McMainWindow::setupUi()
 		auto* refreshPosterAction = menu.addAction(svgIcon(":/icons/refresh.svg"), refreshPosterLabel);
 		connect(refreshPosterAction, &QAction::triggered, this, [selectedFileIds] {
 			auto& pm = PosterManager::instance();
-			for (qint64 fid : selectedFileIds) pm.refresh(fid);
+			if (selectedFileIds.size() > 1)
+				pm.refreshBatch(selectedFileIds);
+			else
+				pm.refresh(selectedFileIds.first());
 		});
 
 		auto* dlSubsAction = menu.addAction(svgIcon(":/icons/translate.svg"),
@@ -1276,8 +1295,7 @@ void McMainWindow::setupUi()
 
 	connect(m_jobPanel, &McJobPanel::refreshPosterBatchRequested,
 	        this, [](const QList<qint64>& fileIds) {
-		auto& pm = PosterManager::instance();
-		for (qint64 fid : fileIds) pm.refresh(fid);
+		PosterManager::instance().refreshBatch(fileIds);
 	});
 
 	connect(m_jobPanel, &McJobPanel::downloadSubtitlesRequested,
@@ -1843,6 +1861,20 @@ void McMainWindow::setupStatusBar()
 		m_btnCancelSubtitles->setText(tr("Cancelling…"));
 	});
 	statusBar()->addPermanentWidget(m_btnCancelSubtitles);
+
+	m_posterProgressBar = new QProgressBar(this);
+	m_posterProgressBar->setMaximumWidth(200);
+	m_posterProgressBar->setVisible(false);
+	statusBar()->addPermanentWidget(m_posterProgressBar);
+
+	m_btnCancelPosterRefresh = new QPushButton(tr("Cancel Poster Refresh"), this);
+	m_btnCancelPosterRefresh->setVisible(false);
+	connect(m_btnCancelPosterRefresh, &QPushButton::clicked, this, [this] {
+		PosterManager::instance().cancelBatch();
+		m_btnCancelPosterRefresh->setEnabled(false);
+		m_btnCancelPosterRefresh->setText(tr("Cancelling…"));
+	});
+	statusBar()->addPermanentWidget(m_btnCancelPosterRefresh);
 
 	m_savedLabel = new QLabel(this);
 	m_savedLabel->setVisible(false);

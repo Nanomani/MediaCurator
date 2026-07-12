@@ -19,6 +19,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QMutex>
 #include <QThread>
@@ -113,6 +114,16 @@ public:
 		return m_queue.isEmpty();
 	}
 
+	// Drops every id still waiting in the queue (a file already taken by a worker
+	// is unaffected — it finishes normally).
+	void removeIds(const QSet<qint64>& ids)
+	{
+		if (ids.isEmpty()) return;
+		QMutexLocker lock(&m_mutex);
+		for (int i = m_queue.size() - 1; i >= 0; --i)
+			if (ids.contains(m_queue[i])) m_queue.removeAt(i);
+	}
+
 signals:
 	void workAvailable();
 
@@ -164,6 +175,9 @@ signals:
 	void fanartReady(qint64 fileId, QString fanartPath, QImage image);
 	void tmdbDataReady(qint64 fileId, QString title, int year, double rating);
 	void imdbIdSaved(qint64 fileId, QString imdbId);
+	// Fired once per file after processFile() returns, regardless of outcome —
+	// drives PosterManager's batch-refresh progress tracking.
+	void fileProcessed(qint64 fileId);
 
 private slots:
 	void tryProcessNext()
@@ -178,6 +192,7 @@ private slots:
 		m_processing = true;
 		processFile(*fileId);
 		m_processing = false;
+		emit fileProcessed(*fileId);
 
 		if (!m_stopping)
 			QMetaObject::invokeMethod(this, &PosterWorker::tryProcessNext, Qt::QueuedConnection);
@@ -752,6 +767,16 @@ void PosterManager::startWorkerPool()
 		        this,     &PosterManager::tmdbDataReady);
 		connect(worker, &PosterWorker::imdbIdSaved,
 		        this,     &PosterManager::imdbIdSaved);
+		connect(worker, &PosterWorker::fileProcessed,
+		        this, [this](qint64 fileId) {
+			if (!m_batchActive || !m_batchIds.remove(fileId)) return;
+			++m_batchDone;
+			emit batchProgressChanged(m_batchDone, m_batchTotal);
+			if (m_batchIds.isEmpty()) {
+				m_batchActive = false;
+				emit batchFinished(m_batchDone, m_batchTotal, false);
+			}
+		});
 
 		connect(this, &PosterManager::workerTmdbKeyChanged,
 		        worker, &PosterWorker::setTmdbApiKey,
@@ -1001,6 +1026,41 @@ void PosterManager::refresh(qint64 fileId, const QString& posterPath,
 	DatabaseManager::instance().resetPosterForFile(fileId);
 	if (m_queue)
 		m_queue->enqueueFile(fileId);
+}
+
+void PosterManager::refreshBatch(const QList<qint64>& fileIds)
+{
+	if (fileIds.isEmpty()) return;
+
+	int added = 0;
+	for (qint64 fileId : fileIds) {
+		if (!m_batchIds.contains(fileId)) {
+			m_batchIds.insert(fileId);
+			++added;
+		}
+	}
+	m_batchTotal += added;
+	if (!m_batchActive) {
+		m_batchDone   = 0;
+		m_batchActive = true;
+	}
+	emit batchProgressChanged(m_batchDone, m_batchTotal);
+
+	for (qint64 fileId : fileIds)
+		refresh(fileId);
+}
+
+void PosterManager::cancelBatch()
+{
+	if (!m_batchActive) return;
+	if (m_queue)
+		m_queue->removeIds(m_batchIds);
+	const int done = m_batchDone, total = m_batchTotal;
+	m_batchIds.clear();
+	m_batchTotal  = 0;
+	m_batchDone   = 0;
+	m_batchActive = false;
+	emit batchFinished(done, total, true);
 }
 
 } // namespace Mc

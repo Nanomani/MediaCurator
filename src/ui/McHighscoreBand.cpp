@@ -7,6 +7,18 @@
 
 namespace Mc {
 
+namespace {
+// Mirrors McMainWindow::updateSavedLabel()'s status-bar formatting so the
+// leaderboard reads in the same units as the rest of the app.
+QString formatReclaimed(qint64 mb)
+{
+	const double gb = mb / 1024.0;
+	return gb >= 1.0
+	    ? QObject::tr("%1 GB").arg(gb, 0, 'f', 2)
+	    : QObject::tr("%1 MB").arg(static_cast<double>(mb), 0, 'f', 1);
+}
+}
+
 McHighscoreBand::McHighscoreBand(QWidget* parent)
 	: QWidget(parent)
 {
@@ -31,7 +43,8 @@ void McHighscoreBand::setEntries(const QList<HighscoreEntry>& topEntries)
 	QStringList parts;
 	int rank = 1;
 	for (const HighscoreEntry& e : topEntries) {
-		parts << QStringLiteral("%1. %2 — %3 MB").arg(rank++).arg(e.name.toHtmlEscaped()).arg(e.score);
+		parts << QStringLiteral("%1. %2 — %3").arg(rank++).arg(e.name.toHtmlEscaped(),
+		                                                       formatReclaimed(e.score));
 	}
 	m_label->setText(QStringLiteral("\U0001F3C6 %1&nbsp;&nbsp;&nbsp;› %2")
 	                      .arg(parts.join(QStringLiteral("&nbsp;&nbsp;&nbsp;")), tr("View leaderboard")));
