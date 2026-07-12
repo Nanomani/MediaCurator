@@ -18,6 +18,22 @@
 
 namespace Mc {
 
+// Reorders `entries`/`checks` (kept in lockstep) according to `perm`, a permutation of [0, n).
+static void applyPermutation(QList<JobCardEntry>& entries, QList<Qt::CheckState>& checks,
+                              const QList<int>& perm)
+{
+	QList<JobCardEntry>    sortedE;
+	QList<Qt::CheckState>  sortedC;
+	sortedE.reserve(perm.size());
+	sortedC.reserve(perm.size());
+	for (int i : perm) {
+		sortedE.append(std::move(entries[i]));
+		sortedC.append(checks[i]);
+	}
+	entries = std::move(sortedE);
+	checks  = std::move(sortedC);
+}
+
 // Sort m_allEntries by the live savings estimate (same formula as the badge).
 // j.saved_bytes can be stale when jobs were created with an older formula;
 // this ensures "Largest savings first" matches what the user sees in the card.
@@ -40,17 +56,41 @@ static void sortEntriesByDisplaySavings(QList<JobCardEntry>& entries, QList<Qt::
 	QList<int> perm(n);
 	for (int i = 0; i < n; ++i) perm[i] = i;
 	std::stable_sort(perm.begin(), perm.end(), [&](int a, int b) { return saved[a] > saved[b]; });
+	applyPermutation(entries, checks, perm);
+}
 
-	QList<JobCardEntry>    sortedE;
-	QList<Qt::CheckState>  sortedC;
-	sortedE.reserve(n);
-	sortedC.reserve(n);
-	for (int i : perm) {
-		sortedE.append(std::move(entries[i]));
-		sortedC.append(checks[i]);
-	}
-	entries = std::move(sortedE);
-	checks  = std::move(sortedC);
+// Mirrors the SQL "j.finished_at DESC, j.id DESC" ordering used by MostRecentFirst —
+// both fields are already in memory (JobDisplayRecord), so switching to this mode
+// never needs a DB round-trip, just a re-sort of what's already loaded.
+static void sortEntriesByMostRecent(QList<JobCardEntry>& entries, QList<Qt::CheckState>& checks)
+{
+	const int n = entries.size();
+	if (n < 2) return;
+
+	QList<int> perm(n);
+	for (int i = 0; i < n; ++i) perm[i] = i;
+	std::stable_sort(perm.begin(), perm.end(), [&](int a, int b) {
+		if (entries[a].job.finishedAt != entries[b].job.finishedAt)
+			return entries[a].job.finishedAt > entries[b].job.finishedAt;
+		return entries[a].job.jobId > entries[b].job.jobId;
+	});
+	applyPermutation(entries, checks, perm);
+}
+
+// Mirrors the SQL "COALESCE(f.size_bytes,0) ASC, j.created_at ASC" default ordering.
+static void sortEntriesBySmallestFirst(QList<JobCardEntry>& entries, QList<Qt::CheckState>& checks)
+{
+	const int n = entries.size();
+	if (n < 2) return;
+
+	QList<int> perm(n);
+	for (int i = 0; i < n; ++i) perm[i] = i;
+	std::stable_sort(perm.begin(), perm.end(), [&](int a, int b) {
+		if (entries[a].job.sizeBytes != entries[b].job.sizeBytes)
+			return entries[a].job.sizeBytes < entries[b].job.sizeBytes;
+		return entries[a].job.createdAt < entries[b].job.createdAt;
+	});
+	applyPermutation(entries, checks, perm);
 }
 
 // Bakes pending flag_changes_json overrides (default/forced/original/language) onto the
@@ -241,7 +281,25 @@ void McJobListModel::reloadPaged(int limit)
 
 void McJobListModel::setSortMode(JobSortMode sortMode)
 {
+	if (m_sortMode == sortMode) return;
 	m_sortMode = sortMode;
+
+	// Every field these sorts key on (savedBytes-derived estimate, finishedAt,
+	// sizeBytes/createdAt) is already sitting in m_allEntries — re-sort in place
+	// instead of the caller doing a full DB reload just to change row order.
+	switch (sortMode) {
+	case JobSortMode::LargestSavingsFirst:
+		sortEntriesByDisplaySavings(m_allEntries, m_allCheckStates);
+		break;
+	case JobSortMode::MostRecentFirst:
+		sortEntriesByMostRecent(m_allEntries, m_allCheckStates);
+		break;
+	case JobSortMode::SmallestFirst:
+	default:
+		sortEntriesBySmallestFirst(m_allEntries, m_allCheckStates);
+		break;
+	}
+	applyFilter();
 }
 
 void McJobListModel::updateJob(qint64 jobId, const QString& status, qint64 savedBytes)
@@ -426,9 +484,10 @@ void McJobListModel::applyFilter()
 {
 	using QF = McFilterPanel;
 
-	beginResetModel();
-	m_entries.clear();
-	m_checkStates.clear();
+	QList<JobCardEntry>   newEntries;
+	QList<Qt::CheckState> newChecks;
+	newEntries.reserve(m_entries.size());
+	newChecks.reserve(m_checkStates.size());
 
 	for (int i = 0; i < m_allEntries.size(); ++i) {
 		const JobCardEntry& e = m_allEntries[i];
@@ -521,10 +580,50 @@ void McJobListModel::applyFilter()
 			if (r <= 0.0 || r < m_ratingMin || r > m_ratingMax) continue;
 		}
 
-		m_entries.append(e);
-		m_checkStates.append(m_allCheckStates[i]);
+		newEntries.append(e);
+		newChecks.append(m_allCheckStates[i]);
 	}
-	endResetModel();
+
+	// Diff against the previous filtered list instead of a full model reset.
+	// m_entries and newEntries are both order-preserving subsequences of
+	// m_allEntries (built by the same forward loop above), so wherever they
+	// disagree it's a pure insertion or removal, never a reorder — matched rows
+	// are updated in place with dataChanged instead of the whole list being torn
+	// down and rebuilt. That's what makes a status/quick-filter change feel
+	// instant even with hundreds of jobs, instead of forcing every card's size
+	// hint and poster to be recomputed.
+	QSet<qint64> newIds;
+	newIds.reserve(newEntries.size());
+	for (const auto& e : newEntries) newIds.insert(e.job.jobId);
+	QSet<qint64> oldIds;
+	oldIds.reserve(m_entries.size());
+	for (const auto& e : m_entries) oldIds.insert(e.job.jobId);
+
+	int i = 0, j = 0;
+	while (i < m_entries.size() || j < newEntries.size()) {
+		if (i < m_entries.size() && j < newEntries.size()
+		        && m_entries[i].job.jobId == newEntries[j].job.jobId) {
+			m_entries[i]     = newEntries[j];
+			m_checkStates[i] = newChecks[j];
+			emit dataChanged(index(i), index(i));
+			++i; ++j;
+		} else if (i < m_entries.size() && !newIds.contains(m_entries[i].job.jobId)) {
+			beginRemoveRows({}, i, i);
+			m_entries.removeAt(i);
+			m_checkStates.removeAt(i);
+			endRemoveRows();
+		} else if (j < newEntries.size() && !oldIds.contains(newEntries[j].job.jobId)) {
+			beginInsertRows({}, i, i);
+			m_entries.insert(i, newEntries[j]);
+			m_checkStates.insert(i, newChecks[j]);
+			endInsertRows();
+			++i; ++j;
+		} else {
+			// Unreachable given the subsequence invariant above — guard against an
+			// infinite loop rather than risk one.
+			break;
+		}
+	}
 }
 
 QList<qint64> McJobListModel::checkedJobIds() const

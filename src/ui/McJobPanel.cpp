@@ -517,8 +517,12 @@ void McJobPanel::setupUi()
 			AppSettings::instance().setValue(QStringLiteral("jobPanel/sortMode"), idx);
 			m_lastQueueSortIdx = idx;  // remember for restore when leaving Done/Failed
 		}
+		// setSortMode() already re-sorts m_allEntries in place and re-applies the
+		// current filter — a full reload() here would be a redundant DB round-trip
+		// (this is also what made the Done/Failed tabs' auto sort-switch feel like
+		// it randomly stalled: it silently forced a full unpaged reload on every
+		// entry/exit of those tabs).
 		m_model->setSortMode(mode);
-		m_model->reload();
 		m_listView->scrollToTop();
 		if (m_queue) m_queue->setSortMode(mode);
 	});
