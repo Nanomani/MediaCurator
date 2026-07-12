@@ -840,6 +840,43 @@ void JobQueue::onRemuxJobFinished(int storageGroup, qint64 jobId, qint64 fileId,
 		return;
 	}
 
+	if (!ok) {
+		// mkvmerge can't tell a genuinely missing source from a sidecar file that a
+		// previous job already muxed into the container and deleted, but whose
+		// removal never made it back into this job's (now stale) command line —
+		// e.g. the job was queued before that earlier job's rescan ran. Recognize
+		// that specific mkvmerge error and self-heal instead of leaving a
+		// permanently failed job: drop the stale job and rescan/reanalyze the file
+		// so a fresh job gets built from the current on-disk track layout.
+		static const QRegularExpression staleFileRe(
+		    R"(The file '(.+)' could not be opened for reading: open file error)",
+		    QRegularExpression::CaseInsensitiveOption);
+		const auto    staleMatch  = staleFileRe.match(log);
+		const QString missingPath = staleMatch.hasMatch() ? staleMatch.captured(1) : QString{};
+		const bool    staleSidecar = !missingPath.isEmpty() && missingPath != remux->inputFilePath();
+
+		if (staleSidecar && fileId > 0) {
+			qWarning() << "JobQueue: job" << jobId << "referenced" << missingPath
+			           << "which no longer exists (likely already muxed in by an earlier job) "
+			              "— dropping the job and rescanning" << fileId;
+			db.deleteJob(jobId);
+			remux->deleteLater();
+			releaseSlot(storageGroup);
+			emit jobFinished(jobId, false, 0);
+			rescanFile(fileId, {}, /*triggerReanalysis=*/true);
+
+			if (m_running && !m_paused) {
+				dispatchJobs();
+			} else if (m_paused) {
+				if (DatabaseManager::instance().queuedJobCount() == 0 && !hasActiveJob()) {
+					m_running = false;
+					emit allFinished();
+				}
+			}
+			return;
+		}
+	}
+
 	db.updateJobStatus(jobId, ok ? "done" : "failed", exitCode, log);
 	if (ok && savedBytes > 0) {
 		db.updateJobSavedBytes(jobId, savedBytes);
