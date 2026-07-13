@@ -1612,10 +1612,10 @@ void McMainWindow::setupActions()
 	m_actQuickScan->setIcon(svgIcon(":/icons/refresh.svg"));
 	connect(m_actQuickScan, &QAction::triggered, this, &McMainWindow::onQuickScan);
 
-	m_actRemoveFolder = new QAction(tr("Manage Library Folders…"), this);
-	m_actRemoveFolder->setToolTip(tr("View and remove folders from the library database"));
-	m_actRemoveFolder->setIcon(svgIcon(":/icons/delete.svg"));
-	connect(m_actRemoveFolder, &QAction::triggered, this, &McMainWindow::onRemoveFolder);
+	m_actLibraryFolders = new QAction(tr("Manage Library Folders…"), this);
+	m_actLibraryFolders->setToolTip(tr("View and remove folders from the library database"));
+	m_actLibraryFolders->setIcon(svgIcon(":/icons/delete.svg"));
+	connect(m_actLibraryFolders, &QAction::triggered, this, &McMainWindow::onRemoveFolder);
 
 	m_actAnalyze = new QAction(tr("Analyze Library"), this);
 	m_actAnalyze->setShortcut(QKeySequence("Ctrl+Shift+A"));
@@ -1700,11 +1700,15 @@ void McMainWindow::setupToolBar()
 	}
 
 	tb->addAction(m_actScanFolder);
+	tb->addSeparator();
 	tb->addAction(m_actScanLibrary);
 	tb->addAction(m_actQuickScan);
+	tb->addSeparator();
 	tb->addAction(m_actAnalyze);
 	tb->addAction(m_actQuickAnalyze);
+	tb->addSeparator();
 	tb->addAction(m_actSimulate);
+	tb->addSeparator();
 	tb->addAction(m_actToggleQueue);
 	if (m_actToggleHighscore)
 		tb->addAction(m_actToggleHighscore);
@@ -1723,9 +1727,11 @@ void McMainWindow::setupMenuBar()
 	// File menu
 	QMenu* fileMenu = menuBar()->addMenu(tr("&File"));
 	fileMenu->addAction(m_actScanFolder);
+	fileMenu->addSeparator();
 	fileMenu->addAction(m_actScanLibrary);
 	fileMenu->addAction(m_actQuickScan);
-	fileMenu->addAction(m_actRemoveFolder);
+	fileMenu->addSeparator();
+	fileMenu->addAction(m_actLibraryFolders);
 	fileMenu->addSeparator();
 	auto* quitAction = new QAction(svgIcon(":/icons/logout.svg"), tr("&Quit"), this);
 	quitAction->setShortcut(QKeySequence::Quit);
@@ -1792,6 +1798,7 @@ void McMainWindow::setupMenuBar()
 	QMenu* toolsMenu = menuBar()->addMenu(tr("&Tools"));
 	toolsMenu->addAction(m_actAnalyze);
 	toolsMenu->addAction(m_actQuickAnalyze);
+	toolsMenu->addSeparator();
 	toolsMenu->addAction(m_actSimulate);
 	toolsMenu->addSeparator();
 	toolsMenu->addAction(m_actSettings);
@@ -2913,7 +2920,7 @@ void McMainWindow::setScanningState(bool scanning)
 	}
 	// Disable scan/analyze actions while scanning; restore proper conditional state when done
 	m_actScanFolder->setEnabled(!scanning);
-	m_actRemoveFolder->setEnabled(!scanning);
+	m_actLibraryFolders->setEnabled(!scanning);
 	if (scanning) {
 		m_actScanLibrary->setEnabled(false);
 		m_actQuickScan->setEnabled(false);

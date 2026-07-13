@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <QHash>
 #include <QIcon>
@@ -126,7 +126,7 @@ private:
 	QAction*     m_actScanFolder    = nullptr;
 	QAction*     m_actScanLibrary   = nullptr;
 	QAction*     m_actQuickScan     = nullptr;
-	QAction*     m_actRemoveFolder  = nullptr;
+	QAction*     m_actLibraryFolders  = nullptr;
 	QAction*     m_actAnalyze       = nullptr;
 	QAction*     m_actQuickAnalyze  = nullptr;
 	QAction*     m_actSimulate      = nullptr;
