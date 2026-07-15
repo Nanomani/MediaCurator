@@ -144,6 +144,10 @@ bool McFileListModel::entryPassesFilter(const FileEntry& e) const
 		}
 	}
 
+	// ── Storage group filter ──────────────────────────────────────────────────
+	if (m_storageGroupMask != 0 && !(m_storageGroupMask & (1u << e.storageGroup)))
+		return false;
+
 	// ── Rating filter ─────────────────────────────────────────────────────────
 	const bool ratingFilterActive = (m_ratingMin > 0.0 || m_ratingMax < 10.0);
 	if (ratingFilterActive) {
@@ -444,6 +448,13 @@ void McFileListModel::setQuickFilters(quint32 flags)
 {
 	if (m_quickFilters == flags) return;
 	m_quickFilters = flags;
+	applyFilter();
+}
+
+void McFileListModel::setStorageGroupFilter(quint32 groupMask)
+{
+	if (m_storageGroupMask == groupMask) return;
+	m_storageGroupMask = groupMask;
 	applyFilter();
 }
 

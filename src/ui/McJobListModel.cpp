@@ -379,6 +379,13 @@ void McJobListModel::setQuickFilters(quint32 flags)
 	applyFilter();
 }
 
+void McJobListModel::setStorageGroupFilter(quint32 groupMask)
+{
+	if (m_storageGroupMask == groupMask) return;
+	m_storageGroupMask = groupMask;
+	applyFilter();
+}
+
 void McJobListModel::setRatingFilter(double minRating, double maxRating)
 {
 	if (qFuzzyCompare(m_ratingMin, minRating) && qFuzzyCompare(m_ratingMax, maxRating)) return;
@@ -588,6 +595,10 @@ void McJobListModel::applyFilter(bool forceFullReset)
 				if (!ok) continue;
 			}
 		}
+
+		// ── Storage group filter ─────────────────────────────────────────────────
+		if (m_storageGroupMask != 0 && !(m_storageGroupMask & (1u << e.storageGroup)))
+			continue;
 
 		// ── Rating filter ────────────────────────────────────────────────────────
 		if (m_ratingMin > 0.0 || m_ratingMax < 10.0) {

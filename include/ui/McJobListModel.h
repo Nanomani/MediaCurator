@@ -115,6 +115,7 @@ public slots:
 	void setSortMode(JobSortMode sortMode);
 	void setFilterStatus(const QString& status);   // empty string = show all
 	void setQuickFilters(quint32 flags);           // McFilterPanel::QF_* bitmask
+	void setStorageGroupFilter(quint32 groupMask); // bit (1<<group) per StorageGroupSettings group; 0 = show all
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
 	void updateProgress(qint64 jobId, int percent);
@@ -166,6 +167,7 @@ private:
 	QString                m_filterText;
 	QString                m_filterStatus;
 	quint32                m_quickFilters = 0;
+	quint32                m_storageGroupMask = 0;  // 0 = no storage-group filtering
 	double                 m_ratingMin    = 0.0;
 	double                 m_ratingMax    = 10.0;
 	JobSortMode            m_sortMode     = JobSortMode::SmallestFirst;

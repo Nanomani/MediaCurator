@@ -43,6 +43,7 @@ set(MC_SOURCES
     ui/McHighscoreBand.cpp
     ui/McHighscoreDialog.cpp
     ui/SvgIcon.cpp
+    ui/McStorageGroupChipToggle.cpp
 
     # Engine
     engine/RuleEngine.cpp
@@ -136,6 +137,7 @@ set(MC_HEADERS
     ../include/ui/McHighscoreDialog.h
     ../include/ui/SvgIcon.h
     ../include/ui/McFlagRowWidget.h
+    ../include/ui/McStorageGroupChipToggle.h
 )
 
 if(WIN32)

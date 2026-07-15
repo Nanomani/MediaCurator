@@ -1,5 +1,6 @@
 #include "ui/McJobPanel.h"
 #include "core/AppSettings.h"
+#include "core/StorageGroupSettings.h"
 #include "ui/McBulkSummaryDialog.h"
 #include "ui/McFilterPanel.h"
 #include "ui/McGbGoalDialog.h"
@@ -7,6 +8,7 @@
 #include "ui/McJobCardDelegate.h"
 #include "ui/McJobListModel.h"
 #include "ui/McLanguageFlags.h"
+#include "ui/McStorageGroupChipToggle.h"
 #include "ui/McTrackContextMenu.h"
 #include "ui/RangeSlider.h"
 #include "ui/SvgIcon.h"
@@ -17,6 +19,7 @@
 #include "core/DatabaseManager.h"
 #include "core/ExternalTools.h"
 
+#include <algorithm>
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -390,6 +393,16 @@ void McJobPanel::setupUi()
 	filterLayout->setSpacing(4);
 	filterLayout->addWidget(m_filterEdit, 1);
 	filterLayout->addWidget(m_statusFilter);
+
+	// ── Storage-group chips ────────────────────────────────────────────────────
+	// Own container so refreshStorageGroups() can rebuild the chip row on its own
+	// without disturbing the rest of the bar's layout.
+	m_storageGroupContainer = new QWidget(filterBar);
+	m_storageGroupLayout = new QHBoxLayout(m_storageGroupContainer);
+	m_storageGroupLayout->setContentsMargins(0, 0, 0, 0);
+	m_storageGroupLayout->setSpacing(4);
+	filterLayout->addWidget(m_storageGroupContainer);
+	refreshStorageGroups();
 
 	const auto addPill = [&](const char* label, const QColor& color, const char* tip, quint32 flag) {
 		auto* btn = makePill(QLatin1String(label), color, filterBar);
@@ -1357,6 +1370,10 @@ void McJobPanel::setJobQueue(JobQueue* queue)
 	        m_model, &McJobListModel::onFanartReady);
 	connect(&PosterManager::instance(), &PosterManager::imdbIdSaved,
 	        m_model, &McJobListModel::updateImdbId);
+
+	// m_model didn't exist yet when the storage-group chip row was built above —
+	// apply the chips' (all-checked) initial state now that it does.
+	applyStorageGroupFilter();
 }
 
 void McJobPanel::setTmdbConfigured(bool configured)
@@ -1375,6 +1392,49 @@ void McJobPanel::setFanartOpacity(double opacity)
 {
 	if (auto* d = qobject_cast<McCardDelegate*>(m_listView->itemDelegate()))
 		d->setFanartOpacity(opacity);
+}
+
+void McJobPanel::refreshStorageGroups()
+{
+	// The layout owns deletion here — takeAt() below deletes each chip (and the
+	// separator) exactly once; this list is just a typed view for mask computation.
+	m_storageGroupChips.clear();
+	while (QLayoutItem* item = m_storageGroupLayout->takeAt(0)) {
+		delete item->widget();
+		delete item;
+	}
+
+	const QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
+	QList<int> groups = StorageGroupSettings::partitionRootsByGroup(roots).keys();
+	if (groups.size() <= 1) {
+		m_storageGroupContainer->setVisible(false);
+		applyStorageGroupFilter();
+		return;
+	}
+	std::sort(groups.begin(), groups.end());
+
+	m_storageGroupLayout->addWidget(vSep(m_storageGroupContainer));
+	for (int g : groups) {
+		auto* chip = new McStorageGroupChipToggle(g, m_storageGroupContainer);
+		connect(chip, &McStorageGroupChipToggle::toggled, this, [this](bool) { applyStorageGroupFilter(); });
+		m_storageGroupLayout->addWidget(chip);
+		m_storageGroupChips.append(chip);
+	}
+	m_storageGroupContainer->setVisible(true);
+	applyStorageGroupFilter();
+}
+
+void McJobPanel::applyStorageGroupFilter()
+{
+	// The chip row is built (in the filter bar) before m_model exists (created later
+	// in setupUi()) — the initial refreshStorageGroups() call during construction is a
+	// no-op here; setupUi() applies the built chip state to m_model once it exists.
+	if (!m_model) return;
+	quint32 mask = 0;
+	for (McStorageGroupChipToggle* chip : m_storageGroupChips)
+		if (chip->isChecked())
+			mask |= (1u << chip->group());
+	m_model->setStorageGroupFilter(mask);
 }
 
 void McJobPanel::refresh()

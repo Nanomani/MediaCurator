@@ -1,12 +1,16 @@
 #pragma once
+#include <QList>
 #include <QWidget>
 
 class QComboBox;
+class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 class QTimer;
 
 namespace Mc {
+
+class McStorageGroupChipToggle;
 
 class McFilterPanel : public QWidget {
 	Q_OBJECT
@@ -15,6 +19,12 @@ public:
 
 	QComboBox* statusCombo() const { return m_statusCombo; }
 	QComboBox* sortCombo()   const { return m_sortCombo;   }
+
+	// Rebuilds the storage-group chip row from the current folder→group assignment.
+	// Call after folders are reassigned (e.g. Manage Folders dialog closes) so the
+	// chip set stays live without requiring an app restart. The row renders no chips
+	// (and takes no space) when a single storage group is in use.
+	void refreshStorageGroups();
 
 	enum QuickFilter : quint32 {
 		QF_None   = 0,
@@ -43,9 +53,11 @@ signals:
 	void quickFiltersChanged(quint32 flags);
 	void sortOrderChanged(int order);
 	void ratingFilterChanged(double minRating, double maxRating);
+	void storageGroupFilterChanged(quint32 groupMask);   // bit (1<<group); 0 = show all
 
 private:
 	void onPillToggled(quint32 flag, bool on);
+	void emitStorageGroupFilter();
 
 	void updateRatingLabel();
 	void emitRatingFilter();
@@ -58,6 +70,12 @@ private:
 	QComboBox* m_sortCombo      = nullptr;
 	QWidget*   m_ratingSlider   = nullptr;  // RangeSlider (forward-declared as QWidget)
 	QLabel*    m_ratingLabel    = nullptr;
+
+	// Storage-group chip row — lives in its own container so refreshStorageGroups()
+	// can rebuild it independently of the rest of the filter bar's layout.
+	QWidget*      m_storageGroupContainer = nullptr;
+	QHBoxLayout*  m_storageGroupLayout    = nullptr;
+	QList<McStorageGroupChipToggle*> m_storageGroupChips;
 };
 
 } // namespace Mc

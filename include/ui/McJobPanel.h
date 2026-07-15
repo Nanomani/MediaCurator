@@ -7,6 +7,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QHBoxLayout;
 class QLabel;
 class QLineEdit;
 class QListView;
@@ -19,6 +20,7 @@ namespace Mc {
 class JobQueue;
 class McGoalProgressBar;
 class McJobListModel;
+class McStorageGroupChipToggle;
 
 class McJobPanel : public QWidget
 {
@@ -38,6 +40,13 @@ public:
 
 	// Forwarded to the card delegate — see McCardDelegate::setFanartOpacity.
 	void setFanartOpacity(double opacity);
+
+	// Rebuilds the storage-group chip row from the current folder→group assignment
+	// and reapplies its filter to the underlying model. Call after folders are
+	// reassigned (e.g. Manage Folders dialog closes) so the chip set stays live
+	// without requiring an app restart. Renders no chips (and takes no space)
+	// when a single storage group is in use.
+	void refreshStorageGroups();
 
 	QComboBox* statusCombo() const { return m_statusFilter; }
 	QComboBox* sortCombo()   const { return m_sortCombo;    }
@@ -94,6 +103,7 @@ private:
 	void updateStatusCombo();
 	void focusJob(qint64 jobId);
 	void markJobForFocus(qint64 jobId);
+	void applyStorageGroupFilter();
 	bool eventFilter(QObject* obj, QEvent* event) override;
 	static QString formatSaved(qint64 bytes);
 
@@ -131,6 +141,12 @@ private:
 	QHash<qint64, JobEtaState> m_etaByJob;
 	// Set when a job is promoted to queued; consumed when Running/Queued filter is shown.
 	qint64 m_focusJobId = -1;
+
+	// Storage-group chip row — own container so refreshStorageGroups() can rebuild
+	// it independently of the rest of the filter bar's layout.
+	QWidget*     m_storageGroupContainer = nullptr;
+	QHBoxLayout* m_storageGroupLayout    = nullptr;
+	QList<McStorageGroupChipToggle*> m_storageGroupChips;
 };
 
 } // namespace Mc

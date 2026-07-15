@@ -114,6 +114,7 @@ public slots:
 	void setStatusFilter(int statusIndex); // 0=all, 1=proposed, 2=missing-poster, 3=ignored
 	void setIgnoredBatch(const QList<qint64>& fileIds, bool ignored); // update flag in-place + refilter
 	void setQuickFilters(quint32 flags);
+	void setStorageGroupFilter(quint32 groupMask);   // bit (1<<group) per StorageGroupSettings group; 0 = show all
 	void setSortOrder(int order);
 	void setRatingFilter(double minRating, double maxRating);
 	void setRatingForFile(qint64 fileId, double rating);
@@ -147,6 +148,7 @@ private:
 	bool                      m_filterMissingImdb  = false;
 	bool                      m_filterIgnoredOnly  = false;
 	quint32                   m_quickFilters       = QF_None;
+	quint32                   m_storageGroupMask   = 0;   // 0 = no storage-group filtering
 	int                       m_sortOrder          = SortByName;
 	double                    m_ratingMin          = 0.0;
 	double                    m_ratingMax          = 10.0;

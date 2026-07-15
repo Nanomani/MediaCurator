@@ -1,6 +1,9 @@
 #include "ui/McFilterPanel.h"
 
 #include "ui/RangeSlider.h"
+#include "ui/McStorageGroupChipToggle.h"
+#include "core/AppSettings.h"
+#include "core/StorageGroupSettings.h"
 
 #include <QColor>
 #include <QComboBox>
@@ -13,6 +16,7 @@
 #include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
+#include <algorithm>
 
 namespace Mc {
 
@@ -129,6 +133,16 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 		emit filterStatusChanged(m_statusCombo->currentData().toInt());
 	});
 
+	// ── Storage-group chips ───────────────────────────────────────────────────
+	// Own container so refreshStorageGroups() can rebuild the chip row on its own
+	// without disturbing the rest of the bar's layout.
+	m_storageGroupContainer = new QWidget(this);
+	m_storageGroupLayout = new QHBoxLayout(m_storageGroupContainer);
+	m_storageGroupLayout->setContentsMargins(0, 0, 0, 0);
+	m_storageGroupLayout->setSpacing(4);
+	lay->addWidget(m_storageGroupContainer);
+	refreshStorageGroups();
+
 	// ── Quick-filter pills ────────────────────────────────────────────────────
 	struct PillDef {
 		const char* label;
@@ -224,6 +238,45 @@ void McFilterPanel::onPillToggled(quint32 flag, bool on)
 	if (on) m_activeFilters |= flag;
 	else    m_activeFilters &= ~flag;
 	emit quickFiltersChanged(m_activeFilters);
+}
+
+void McFilterPanel::refreshStorageGroups()
+{
+	// The layout owns deletion here — takeAt() below deletes each chip (and the
+	// separator) exactly once; this list is just a typed view for mask computation.
+	m_storageGroupChips.clear();
+	while (QLayoutItem* item = m_storageGroupLayout->takeAt(0)) {
+		delete item->widget();
+		delete item;
+	}
+
+	const QStringList roots = AppSettings::instance().value("scan/roots").toStringList();
+	QList<int> groups = StorageGroupSettings::partitionRootsByGroup(roots).keys();
+	if (groups.size() <= 1) {
+		m_storageGroupContainer->setVisible(false);
+		emitStorageGroupFilter();
+		return;
+	}
+	std::sort(groups.begin(), groups.end());
+
+	m_storageGroupLayout->addWidget(vSep(m_storageGroupContainer));
+	for (int g : groups) {
+		auto* chip = new McStorageGroupChipToggle(g, m_storageGroupContainer);
+		connect(chip, &McStorageGroupChipToggle::toggled, this, [this](bool) { emitStorageGroupFilter(); });
+		m_storageGroupLayout->addWidget(chip);
+		m_storageGroupChips.append(chip);
+	}
+	m_storageGroupContainer->setVisible(true);
+	emitStorageGroupFilter();
+}
+
+void McFilterPanel::emitStorageGroupFilter()
+{
+	quint32 mask = 0;
+	for (McStorageGroupChipToggle* chip : m_storageGroupChips)
+		if (chip->isChecked())
+			mask |= (1u << chip->group());
+	emit storageGroupFilterChanged(mask);
 }
 
 void McFilterPanel::updateRatingLabel()

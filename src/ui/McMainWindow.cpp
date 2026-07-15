@@ -1152,6 +1152,8 @@ void McMainWindow::setupUi()
 	        m_listModel, &McFileListModel::setSortOrder);
 	connect(m_filterPanel, &McFilterPanel::ratingFilterChanged,
 	        m_listModel, &McFileListModel::setRatingFilter);
+	connect(m_filterPanel, &McFilterPanel::storageGroupFilterChanged,
+	        m_listModel, &McFileListModel::setStorageGroupFilter);
 
 	auto* topWidget = new QWidget(this);
 	auto* topLayout = new QVBoxLayout(topWidget);
@@ -1687,6 +1689,7 @@ void McMainWindow::setupActions()
 			updateHighscoreVisibility();
 		});
 	}
+
 }
 
 void McMainWindow::setupToolBar()
@@ -2140,6 +2143,11 @@ void McMainWindow::onRemoveFolder()
 	if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 		d->setMultiGroupBadgeEnabled(multiGroup);
 	m_jobPanel->setMultiGroupBadgeEnabled(multiGroup);
+	// Folder→group reassignment may have changed which groups currently have
+	// folders — refresh each panel's storage-group chip row to match live,
+	// no restart required.
+	m_filterPanel->refreshStorageGroups();
+	m_jobPanel->refreshStorageGroups();
 
 	if (dlg.anyRemoved() || dlg.anyAdded())
 		onRefreshView();
