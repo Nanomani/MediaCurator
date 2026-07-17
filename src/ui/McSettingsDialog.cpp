@@ -659,6 +659,16 @@ McSettingsDialog::McSettingsDialog(UserProfile* profile, QWidget* parent)
 	tmdbRow->addWidget(m_editTmdbKey, 1);
 	enrichLayout->addLayout(tmdbRow);
 
+	m_chkWriteNfo = new QCheckBox(tr("Write .nfo files (IMDb id only)"), enrichGroup);
+	m_chkWriteNfo->setToolTip(tr(
+		"Writes a Kodi-style .nfo file next to each matched video, containing only its "
+		"IMDb id. If an .nfo already exists, only the id is updated — everything else is "
+		"left untouched. Title, plot, and artwork are deliberately not written here; Kodi "
+		"(or any other scraper) fills those in itself once it matches by id, in whatever "
+		"language your media center is configured for. Off by default."));
+	m_chkWriteNfo->setChecked(profile->writeNfoFiles());
+	enrichLayout->addWidget(m_chkWriteNfo);
+
 	auto* tmdbHint = new QLabel(
 		tr("Get a free key at <a href=\"https://www.themoviedb.org/settings/api\">themoviedb.org</a>."),
 		enrichGroup);
@@ -886,6 +896,7 @@ void McSettingsDialog::accept()
 	m_profile->setUseLocalStaging(m_chkUseLocalStaging->isChecked());
 	m_profile->setLocalStagingDir(QDir::fromNativeSeparators(m_editStagingDir->text().trimmed()));
 	m_profile->setTmdbApiKey(m_editTmdbKey->text().trimmed());
+	m_profile->setWriteNfoFiles(m_chkWriteNfo->isChecked());
 	m_profile->setOpenSubtitlesApiKey(m_editOsApiKey->text().trimmed());
 	m_profile->setOpenSubtitlesUsername(m_editOsUsername->text().trimmed());
 	m_profile->setOpenSubtitlesPassword(m_editOsPassword->text());

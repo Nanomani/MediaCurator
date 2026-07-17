@@ -74,6 +74,12 @@ public:
 	bool writeJobLog() const { return m_writeJobLog; }
 	void setWriteJobLog(bool v);
 
+	// Write/update a Kodi-style .nfo file (IMDb id only) next to each media file.
+	// Off by default — creating or editing files the user didn't explicitly ask
+	// for is a side effect some libraries (and other scrapers) don't want.
+	bool writeNfoFiles() const { return m_writeNfoFiles; }
+	void setWriteNfoFiles(bool v);
+
 	// Mux to a local folder first, then copy the finished file back to its real
 	// destination — avoids reading and writing the same NAS share at once.
 	bool useLocalStaging() const { return m_useLocalStaging; }
@@ -178,6 +184,7 @@ private:
 	bool        m_mergeSidecarSubtitles     = true;
 	bool        m_removeMjpegCoverArt       = true;
 	bool        m_writeJobLog               = false;
+	bool        m_writeNfoFiles             = false;
 	bool        m_useLocalStaging          = false;
 	QString     m_localStagingDir;
 	QString     m_tmdbApiKey;

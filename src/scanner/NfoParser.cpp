@@ -79,10 +79,7 @@ bool NfoParser::checkAndClearOwnWrite(const QString& nfoPath)
 	return ownWrites().remove(nfoPath);
 }
 
-bool NfoParser::writeMovieNfo(const QString& videoPath,
-							   const QString& imdbId,
-							   const QString& title,
-							   int year)
+bool NfoParser::writeMovieNfo(const QString& videoPath, const QString& imdbId)
 {
 	const QString nfoPath = nfoPathFor(videoPath);
 	// Register before the write so the watcher callback (if any) can skip it.
@@ -138,16 +135,38 @@ bool NfoParser::writeMovieNfo(const QString& videoPath,
 			}
 			return false;
 		}
+
+		// Non-XML (scene-release style) NFO: free-form text that already carries an
+		// IMDb id/URL somewhere, sometimes wrong from a copy/paste mistake. Never
+		// truncate/replace a file like this — only correct the id text in place so
+		// everything else (release notes, ASCII art, ...) survives untouched.
+		static const QRegularExpression ttIdRe(R"(\btt\d{7,8}\b)");
+		if (content.contains(ttIdRe)) {
+			content.replace(ttIdRe, imdbId);
+		} else {
+			// No recognizable id at all — append one so Kodi's own scraper can still
+			// pick up the match, without touching the existing content above it.
+			if (!content.isEmpty() && !content.endsWith('\n'))
+				content += '\n';
+			content += QStringLiteral("https://www.imdb.com/title/%1/\n").arg(imdbId);
+		}
+
+		if (file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+			file.write(content.toUtf8());
+#ifdef Q_OS_WIN
+			preserveDirTimestamps(dirPath, dirOrigCreated, dirOrigModified);
+#endif
+			return true;
+		}
+		return false;
 	}
 
-	// Create a fresh minimal Kodi-format NFO
+	// Create a fresh minimal Kodi-format NFO — id tags only. No title/year:
+	// Kodi (or any other scraper) matches by id and fills those in itself, in
+	// whatever language the user's own media center is configured for.
 	QString xml = QStringLiteral(
 		"<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n"
 		"<movie>\n");
-	if (!title.isEmpty())
-		xml += QStringLiteral("  <title>%1</title>\n").arg(title.toHtmlEscaped());
-	if (year > 0)
-		xml += QStringLiteral("  <year>%1</year>\n").arg(year);
 	xml += "  " + uniqueIdTag + "\n";
 	xml += "  " + idTag + "\n";
 	xml += QStringLiteral("</movie>\n");

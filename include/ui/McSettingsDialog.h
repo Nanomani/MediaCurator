@@ -70,6 +70,7 @@ private:
 	QLineEdit*   m_editStagingDir;
 	QPushButton* m_btnBrowseStagingDir;
 	QLineEdit*   m_editTmdbKey;
+	QCheckBox*   m_chkWriteNfo;
 	QLineEdit*   m_editOsApiKey;
 	QLineEdit*   m_editOsUsername;
 	QLineEdit*   m_editOsPassword;

@@ -42,6 +42,11 @@ public:
 	// so they get retried.
 	void setTmdbApiKey(const QString& key);
 
+	// Whether background poster/metadata resolution is also allowed to write
+	// the resolved IMDb id to a .nfo file next to the media file. Off by default
+	// (see UserProfile::writeNfoFiles) — mirrors the user's Settings choice.
+	void setWriteNfoFiles(bool enabled);
+
 	// Enqueue a newly-scanned file for poster lookup without resetting existing data.
 	// No-op if the file already has a poster or the TMDB key is not set.
 	void enqueue(qint64 fileId);
@@ -83,6 +88,7 @@ signals:
 
 	// Internal — cross-thread commands to workers.
 	void workerTmdbKeyChanged(QString key);
+	void workerWriteNfoChanged(bool enabled);
 	void workerStop();
 
 private:
@@ -99,6 +105,7 @@ private:
 	int                    m_parallelWorkers = 4;
 	QNetworkAccessManager* m_nam           = nullptr;   // main-thread NAM for fast direct fetches
 	QString                m_tmdbApiKey;
+	bool                   m_writeNfoFiles = false;
 
 	QSet<qint64>           m_batchIds;
 	int                    m_batchTotal  = 0;

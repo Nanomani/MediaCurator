@@ -138,10 +138,12 @@ class PosterWorker : public QObject
 {
 	Q_OBJECT
 public:
-	explicit PosterWorker(PosterWorkQueue* queue, const QString& tmdbApiKey, QObject* parent = nullptr)
+	explicit PosterWorker(PosterWorkQueue* queue, const QString& tmdbApiKey,
+	                      bool writeNfoFiles, QObject* parent = nullptr)
 	    : QObject(parent)
 	    , m_queue(queue)
 	    , m_tmdbApiKey(tmdbApiKey)
+	    , m_writeNfoFiles(writeNfoFiles)
 	{
 		const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 		m_cacheDir  = dataDir + "/posters";
@@ -163,12 +165,25 @@ public slots:
 	{
 		m_stopping = true;
 		if (m_currentReply) {
+			// We're currently nested inside fetchHttp()'s QEventLoop (that's the
+			// only place m_currentReply is non-null). abort() synchronously emits
+			// finished(), which is connected to that loop's quit() — so it unwinds
+			// on its own. tryProcessNext() calls thread()->quit() once control is
+			// back on the real event loop; doing it here instead would just quit
+			// the nested loop again (QThread::quit()/exit() only affects whichever
+			// loop is currently innermost), leaving the real loop running forever
+			// — the root cause of the old shutdown race.
 			m_currentReply->abort();
 			m_currentReply = nullptr;
+		} else if (!m_processing) {
+			// Idle — not nested inside any loop — safe to quit the real event
+			// loop directly.
+			QThread::currentThread()->quit();
 		}
 	}
 
 	void setTmdbApiKey(const QString& key) { m_tmdbApiKey = key; }
+	void setWriteNfoFiles(bool enabled) { m_writeNfoFiles = enabled; }
 
 signals:
 	void posterReady(qint64 fileId, QString imagePath);
@@ -182,8 +197,17 @@ signals:
 private slots:
 	void tryProcessNext()
 	{
-		if (m_stopping || m_processing)
+		// A reentrant call while m_processing is true means we're nested inside
+		// fetchHttp()'s event loop for the file currently being processed (e.g. a
+		// workAvailable signal for newly-enqueued work delivered while that nested
+		// loop is pumping this thread's queue) — never safe to quit from here.
+		if (m_processing)
 			return;
+
+		if (m_stopping) {
+			QThread::currentThread()->quit();
+			return;
+		}
 
 		const auto fileId = m_queue->takeNext();
 		if (!fileId)
@@ -194,7 +218,9 @@ private slots:
 		m_processing = false;
 		emit fileProcessed(*fileId);
 
-		if (!m_stopping)
+		if (m_stopping)
+			QThread::currentThread()->quit();
+		else
 			QMetaObject::invokeMethod(this, &PosterWorker::tryProcessNext, Qt::QueuedConnection);
 	}
 
@@ -234,10 +260,10 @@ private:
 					DatabaseManager::instance().updateDisplayTitle(fileId, info.title, info.year);
 				emit tmdbDataReady(fileId, info.title, info.year, info.voteAverage);
 			}
-			// Write .nfo so imdbId survives future DB deletions.
-			if (!resolvedImdbId.isEmpty() && !info.title.isEmpty()
+			// Write .nfo (id only) so imdbId survives future DB deletions — opt-in.
+			if (m_writeNfoFiles && !resolvedImdbId.isEmpty()
 			    && !QFile::exists(NfoParser::nfoPathFor(filePath)))
-				NfoParser::writeMovieNfo(filePath, resolvedImdbId, info.title, info.year);
+				NfoParser::writeMovieNfo(filePath, resolvedImdbId);
 			// Newly-discovered imdbId (title-search recovery) needs to reach the live
 			// UI models too -- upsertPosterRecord() alone only updates the DB.
 			if (!resolvedImdbId.isEmpty())
@@ -251,7 +277,7 @@ private:
 		    && QFile::exists(existing->imagePath)) {
 			const bool needsRating = existing->voteAverage <= 0.0;
 			const bool needsTitle  = fileOpt->displayTitle.isEmpty();
-			const bool needsNfo    = !QFile::exists(NfoParser::nfoPathFor(filePath));
+			const bool needsNfo    = m_writeNfoFiles && !QFile::exists(NfoParser::nfoPathFor(filePath));
 			bool needsFanart       = existing->fanartPath.isEmpty()
 			                         || !QFile::exists(existing->fanartPath);
 
@@ -668,9 +694,21 @@ private:
 
 	bool fetchHttp(const QUrl& url, QByteArray& out)
 	{
+		// Once shutdown has been requested, don't start further requests — keeps
+		// stop() from having to abort a growing chain of them one at a time.
+		if (m_stopping) return false;
+
 		QNetworkRequest req(url);
 		req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
 		                 QNetworkRequest::NoLessSafeRedirectPolicy);
+		// Bounds how long a stuck connection (dead route, hung TLS handshake, ...)
+		// can block this thread's nested event loop below — without this, a truly
+		// wedged request could hold the thread past the shutdown wait in
+		// PosterManager::stopWorkerPool(), which used to fall back to
+		// QThread::terminate() in that case: forcibly killing a thread mid
+		// network I/O, which is what caused the "Cannot send events to objects
+		// owned by a different thread" crash on close.
+		req.setTransferTimeout(15000);
 		m_currentReply = m_nam->get(req);
 
 		QEventLoop loop;
@@ -705,6 +743,7 @@ private:
 	QNetworkAccessManager* m_nam          = nullptr;
 	QNetworkReply*         m_currentReply = nullptr;
 	QString                m_tmdbApiKey;
+	bool                   m_writeNfoFiles = false;
 	QString                m_cacheDir;
 	QString                m_fanartDir;
 	bool                   m_stopping   = false;
@@ -753,7 +792,7 @@ void PosterManager::startWorkerPool()
 {
 	while (m_workers.size() < m_parallelWorkers) {
 		auto* thread = new QThread(this);
-		auto* worker = new PosterWorker(m_queue, m_tmdbApiKey);
+		auto* worker = new PosterWorker(m_queue, m_tmdbApiKey, m_writeNfoFiles);
 		worker->moveToThread(thread);
 
 		connect(thread, &QThread::started,  worker, &PosterWorker::startProcessing);
@@ -781,6 +820,9 @@ void PosterManager::startWorkerPool()
 		connect(this, &PosterManager::workerTmdbKeyChanged,
 		        worker, &PosterWorker::setTmdbApiKey,
 		        Qt::QueuedConnection);
+		connect(this, &PosterManager::workerWriteNfoChanged,
+		        worker, &PosterWorker::setWriteNfoFiles,
+		        Qt::QueuedConnection);
 		connect(this, &PosterManager::workerStop,
 		        worker, &PosterWorker::stop,
 		        Qt::QueuedConnection);
@@ -794,14 +836,20 @@ void PosterManager::stopWorkerPool(bool wait)
 {
 	if (m_workers.isEmpty()) return;
 
+	// Ask every worker to stop; each one quits its own thread's event loop once
+	// it's confirmed safe to (see PosterWorker::stop()/tryProcessNext()). Do NOT
+	// call slot.thread->quit() here — QThread::quit()/exit() only affects
+	// whichever event loop is currently innermost for that thread, so calling it
+	// from this (unrelated) thread while a worker is mid-network-call would quit
+	// its nested fetchHttp() wait instead of the real loop, leaving the real loop
+	// running forever. That used to make the wait() below time out and fall back
+	// to terminate() — forcibly killing a thread mid network I/O, which crashed
+	// with "Cannot send events to objects owned by a different thread".
 	emit workerStop();
 	for (WorkerSlot& slot : m_workers) {
 		if (!slot.thread) continue;
-		slot.thread->quit();
-		if (wait && !slot.thread->wait(5000)) {
-			slot.thread->terminate();
-			slot.thread->wait(1000);
-		}
+		if (wait && !slot.thread->wait(20000))
+			qWarning() << "PosterManager: worker thread did not stop in time; abandoning it";
 		slot.thread = nullptr;
 		slot.worker = nullptr;
 	}
@@ -833,13 +881,10 @@ void PosterManager::setParallelWorkers(int count)
 		WorkerSlot slot = m_workers.takeLast();
 		if (slot.worker)
 			QMetaObject::invokeMethod(slot.worker, "stop", Qt::QueuedConnection);
-		if (slot.thread) {
-			slot.thread->quit();
-			if (!slot.thread->wait(5000)) {
-				slot.thread->terminate();
-				slot.thread->wait(1000);
-			}
-		}
+		// slot.thread->quit() deliberately omitted here — see the comment in
+		// stopWorkerPool() above the analogous wait() call.
+		if (slot.thread && !slot.thread->wait(20000))
+			qWarning() << "PosterManager: worker thread did not stop in time; abandoning it";
 	}
 }
 
@@ -855,6 +900,13 @@ void PosterManager::setTmdbApiKey(const QString& key)
 	emit workerTmdbKeyChanged(key);
 	if (!key.isEmpty() && m_queue)
 		m_queue->enqueueFile(-1);
+}
+
+void PosterManager::setWriteNfoFiles(bool enabled)
+{
+	if (enabled == m_writeNfoFiles) return;
+	m_writeNfoFiles = enabled;
+	emit workerWriteNfoChanged(enabled);
 }
 
 void PosterManager::enqueue(qint64 fileId)

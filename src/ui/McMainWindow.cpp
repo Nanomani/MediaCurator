@@ -338,6 +338,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 		m_jobQueue->setLocalStagingDir(m_profile->localStagingDir());
 		m_jobQueue->setDetectSubtitleLanguage(m_profile->detectSidecarSubtitleLanguage());
 		PosterManager::instance().setTmdbApiKey(m_profile->tmdbApiKey());
+		PosterManager::instance().setWriteNfoFiles(m_profile->writeNfoFiles());
 		const bool tmdbConfigured = !m_profile->tmdbApiKey().isEmpty();
 		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			d->setTmdbConfigured(tmdbConfigured);
@@ -555,6 +556,7 @@ McMainWindow::McMainWindow(QWidget* parent)
 	// ── Poster manager ────────────────────────────────────────────────────────
 	auto& pm = PosterManager::instance();
 	pm.start(m_profile->tmdbApiKey());
+	pm.setWriteNfoFiles(m_profile->writeNfoFiles());
 	connect(&pm, &PosterManager::posterReady,
 	        m_listModel, &McFileListModel::onPosterReady);
 	connect(&pm, &PosterManager::fanartReady,
@@ -717,7 +719,8 @@ void McMainWindow::setupUi()
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
-				NfoParser::writeMovieNfo(file.path, id, dlg.selectedTitle(), dlg.selectedYear());
+				if (m_profile->writeNfoFiles())
+					NfoParser::writeMovieNfo(file.path, id);
 				PosterManager::instance().refresh(file.id, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath());
@@ -1034,7 +1037,8 @@ void McMainWindow::setupUi()
 				if (result != QDialog::Accepted) continue;
 				const QString imdbId = dlg.selectedImdbId();
 				if (imdbId.isEmpty()) continue;
-				NfoParser::writeMovieNfo(f.path, imdbId, dlg.selectedTitle(), dlg.selectedYear());
+				if (m_profile->writeNfoFiles())
+					NfoParser::writeMovieNfo(f.path, imdbId);
 				PosterManager::instance().refresh(f.id, dlg.selectedPosterPath(), dlg.selectedImageData(), imdbId,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath());
@@ -1263,8 +1267,8 @@ void McMainWindow::setupUi()
 		if (dlg.exec() == QDialog::Accepted) {
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
-				NfoParser::writeMovieNfo(fileOpt->path, id,
-				                        dlg.selectedTitle(), dlg.selectedYear());
+				if (m_profile->writeNfoFiles())
+					NfoParser::writeMovieNfo(fileOpt->path, id);
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath());
@@ -1319,8 +1323,8 @@ void McMainWindow::setupUi()
 
 			const QString id = dlg.selectedImdbId();
 			if (!id.isEmpty()) {
-				NfoParser::writeMovieNfo(fileOpt->path, id,
-				                        dlg.selectedTitle(), dlg.selectedYear());
+				if (m_profile->writeNfoFiles())
+					NfoParser::writeMovieNfo(fileOpt->path, id);
 				PosterManager::instance().refresh(fileId, dlg.selectedPosterPath(), dlg.selectedImageData(), id,
 				                                 dlg.selectedVoteAverage(), dlg.selectedVoteCount(),
 				                                 dlg.selectedFanartPath());
