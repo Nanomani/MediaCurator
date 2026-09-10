@@ -90,6 +90,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGridLayout>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -345,6 +346,37 @@ static void deleteFileAndSidecarsAsync(const QString& videoPath)
 		if (sizeBytes > 0) {
 			QMetaObject::invokeMethod(qApp, [sizeBytes] {
 				Mc::StoragePriceService::instance().recordManualDeletion(sizeBytes);
+			}, Qt::QueuedConnection);
+		}
+	});
+}
+
+// True if `folder` is itself one of the user's configured scan roots. "Delete
+// this movie's folder" must never be able to mean "delete my whole library" —
+// normalizedRoot() matches the same case-folding/separator rules the scan-root
+// list itself is stored with.
+static bool isConfiguredScanRoot(const QString& folder)
+{
+	const QString norm = Mc::StorageGroupSettings::normalizedRoot(folder);
+	const QStringList roots = Mc::AppSettings::instance().value("scan/roots").toStringList();
+	for (const QString& r : roots) {
+		if (Mc::StorageGroupSettings::normalizedRoot(r) == norm) return true;
+	}
+	return false;
+}
+
+// Deletes each folder in `folderPaths` recursively — sidecars, posters, and any
+// other editions/extras inside go with it — then records `totalBytes` as
+// reclaimed. Same off-UI-thread reasoning as deleteFileAndSidecarsAsync() above.
+static void deleteFoldersAsync(const QStringList& folderPaths, qint64 totalBytes)
+{
+	(void)QtConcurrent::run([folderPaths, totalBytes] {
+		for (const QString& folder : folderPaths)
+			QDir(folder).removeRecursively();
+
+		if (totalBytes > 0) {
+			QMetaObject::invokeMethod(qApp, [totalBytes] {
+				Mc::StoragePriceService::instance().recordManualDeletion(totalBytes);
 			}, Qt::QueuedConnection);
 		}
 	});
@@ -785,6 +817,69 @@ McMainWindow::~McMainWindow()
 		m_nativeBgBrush = nullptr;
 	}
 #endif
+}
+
+McMainWindow::RemoveFileChoice McMainWindow::showRemoveFileDialog(const QString& title,
+                                                                   const QString& body,
+                                                                   int fileCount, int folderCount)
+{
+	QMessageBox dlg(this);
+	dlg.setWindowTitle(title);
+	dlg.setText(body);
+	dlg.setIcon(QMessageBox::Question);
+
+	// QMessageBox sizes itself to its label's wrapped width, which breaks a long
+	// filename across two lines — widen it with the standard Qt trick of
+	// stretching an invisible spacer across the underlying grid layout.
+	if (auto* grid = qobject_cast<QGridLayout*>(dlg.layout())) {
+		auto* spacer = new QSpacerItem(480, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
+		grid->addItem(spacer, grid->rowCount(), 0, 1, grid->columnCount());
+	}
+
+	QAbstractButton* deleteFolderBtn = nullptr;
+	if (folderCount > 0) {
+		deleteFolderBtn = dlg.addButton(
+			folderCount > 1 ? tr("Delete Folders from Disk") : tr("Delete Folder from Disk"),
+			QMessageBox::DestructiveRole);
+		deleteFolderBtn->setToolTip(tr("Deletes the entire containing folder — including any "
+		                               "other editions, extras, or sidecar files in it."));
+	}
+	auto* deleteFilesBtn = dlg.addButton(
+		fileCount > 1 ? tr("Delete Files from Disk") : tr("Delete File from Disk"),
+		QMessageBox::DestructiveRole);
+	auto* removeBtn = dlg.addButton(tr("Remove from Library Only"), QMessageBox::AcceptRole);
+	dlg.addButton(QMessageBox::Cancel);
+	dlg.setDefaultButton(QMessageBox::Cancel);
+	dlg.exec();
+
+	QAbstractButton* clicked = dlg.clickedButton();
+	if (clicked != deleteFolderBtn && clicked != deleteFilesBtn) {
+		if (clicked == removeBtn) return RemoveFileChoice::RemoveFromLibrary;
+		return RemoveFileChoice::Cancelled;
+	}
+
+	// Both delete buttons sit right next to Cancel/Remove in the same dialog, so
+	// a misclick immediately deletes from disk with no way back — require a
+	// second, explicit confirmation (defaulted to Cancel) before actually doing it.
+	const bool isFolder = (clicked == deleteFolderBtn);
+	QMessageBox confirm(this);
+	confirm.setWindowTitle(tr("Confirm Delete"));
+	confirm.setIcon(QMessageBox::Warning);
+	confirm.setText(isFolder
+		? (folderCount > 1
+		       ? tr("Permanently delete %1 folder(s) from disk? This cannot be undone.").arg(folderCount)
+		       : tr("Permanently delete this folder from disk? This cannot be undone."))
+		: (fileCount > 1
+		       ? tr("Permanently delete %1 file(s) from disk? This cannot be undone.").arg(fileCount)
+		       : tr("Permanently delete this file from disk? This cannot be undone.")));
+	auto* confirmDeleteBtn = confirm.addButton(tr("Delete"), QMessageBox::DestructiveRole);
+	confirm.addButton(QMessageBox::Cancel);
+	confirm.setDefaultButton(QMessageBox::Cancel);
+	confirm.exec();
+	if (confirm.clickedButton() != confirmDeleteBtn)
+		return RemoveFileChoice::Cancelled;
+
+	return isFolder ? RemoveFileChoice::DeleteFolders : RemoveFileChoice::DeleteFiles;
 }
 
 void McMainWindow::setupUi()
@@ -1259,22 +1354,32 @@ void McMainWindow::setupUi()
 
 				auto* removeAction = menu.addAction(svgIcon(":/icons/delete.svg"), tr("Remove &Edition from Library…"));
 				connect(removeAction, &QAction::triggered, this, [this, rowFile] {
-					QMessageBox dlg(this);
-					dlg.setWindowTitle(tr("Remove Edition"));
-					dlg.setText(tr("\"%1\" will be removed from MediaCurator. "
-					                "You can re-add it by scanning the folder again.").arg(rowFile.filename));
-					dlg.setIcon(QMessageBox::Question);
-					auto* deleteBtn = dlg.addButton(tr("Delete File from Disk"), QMessageBox::DestructiveRole);
-					auto* removeBtn = dlg.addButton(tr("Remove from Library Only"), QMessageBox::AcceptRole);
-					dlg.addButton(QMessageBox::Cancel);
-					dlg.setDefaultButton(QMessageBox::Cancel);
-					dlg.exec();
-					if (dlg.clickedButton() != deleteBtn && dlg.clickedButton() != removeBtn) return;
+					const QString folder = QFileInfo(rowFile.path).absolutePath();
+					const int folderCount = isConfiguredScanRoot(folder) ? 0 : 1;
+					const auto choice = showRemoveFileDialog(tr("Remove Edition"),
+						tr("\"%1\" will be removed from MediaCurator.").arg(rowFile.filename),
+						/*fileCount=*/1, folderCount);
+					if (choice == RemoveFileChoice::Cancelled) return;
 
 					auto& db = DatabaseManager::instance();
+					if (choice == RemoveFileChoice::DeleteFolders) {
+						qint64 totalBytes = 0;
+						for (const FileRecord& fr : db.filesUnderPath(folder)) {
+							totalBytes += fr.sizeBytes;
+							db.deleteJobsForFile(fr.id);
+							if (db.deleteFile(fr.id)) {
+								m_listModel->removeEntry(fr.id);
+								m_jobPanel->removeJobsForFile(fr.id);
+							}
+						}
+						deleteFoldersAsync({ folder }, totalBytes);
+						m_statusLabel->setText(tr("Deleted folder \"%1\" from disk").arg(QDir(folder).dirName()));
+						return;
+					}
+
 					db.deleteJobsForFile(rowFile.id);
 					if (db.deleteFile(rowFile.id)) {
-						if (dlg.clickedButton() == deleteBtn) {
+						if (choice == RemoveFileChoice::DeleteFiles) {
 							deleteFileAndSidecarsAsync(rowFile.path);
 						}
 						m_listModel->removeEntry(rowFile.id);
@@ -1386,24 +1491,47 @@ void McMainWindow::setupUi()
 				connect(removeAction, &QAction::triggered, this, [this, allMemberIds, repFile] {
 					const int n = allMemberIds.size();
 					const QString body = n > 1
-					    ? tr("All %1 editions of \"%2\" will be removed from MediaCurator. "
-					         "You can re-add them by scanning the folder again.")
+					    ? tr("All %1 editions of \"%2\" will be removed from MediaCurator.")
 					          .arg(n).arg(repFile.displayTitle.isEmpty() ? repFile.filename : repFile.displayTitle)
-					    : tr("\"%1\" will be removed from MediaCurator. "
-					         "You can re-add it by scanning the folder again.").arg(repFile.filename);
-					QMessageBox dlg(this);
-					dlg.setWindowTitle(n > 1 ? tr("Remove Movie") : tr("Remove File"));
-					dlg.setText(body);
-					dlg.setIcon(QMessageBox::Question);
-					auto* deleteBtn = dlg.addButton(tr("Delete Files from Disk"), QMessageBox::DestructiveRole);
-					auto* removeBtn = dlg.addButton(tr("Remove from Library Only"), QMessageBox::AcceptRole);
-					dlg.addButton(QMessageBox::Cancel);
-					dlg.setDefaultButton(QMessageBox::Cancel);
-					dlg.exec();
-					if (dlg.clickedButton() != deleteBtn && dlg.clickedButton() != removeBtn) return;
+					    : tr("\"%1\" will be removed from MediaCurator.").arg(repFile.filename);
 
-					const bool deleteFromDisk = (dlg.clickedButton() == deleteBtn);
 					auto& db = DatabaseManager::instance();
+					QSet<QString> folderSet;
+					for (qint64 fid : allMemberIds) {
+						if (const auto fOpt = db.fileById(fid))
+							folderSet.insert(QFileInfo(fOpt->path).absolutePath());
+					}
+					bool anyIsScanRoot = false;
+					for (const QString& folder : folderSet)
+						if (isConfiguredScanRoot(folder)) { anyIsScanRoot = true; break; }
+					const int folderCount = anyIsScanRoot ? 0 : folderSet.size();
+
+					const auto choice = showRemoveFileDialog(n > 1 ? tr("Remove Movie") : tr("Remove File"),
+						body, /*fileCount=*/n, folderCount);
+					if (choice == RemoveFileChoice::Cancelled) return;
+
+					if (choice == RemoveFileChoice::DeleteFolders) {
+						qint64 totalBytes = 0;
+						QSet<qint64> removedIds;
+						for (const QString& folder : folderSet) {
+							for (const FileRecord& fr : db.filesUnderPath(folder)) {
+								if (removedIds.contains(fr.id)) continue;
+								totalBytes += fr.sizeBytes;
+								db.deleteJobsForFile(fr.id);
+								if (db.deleteFile(fr.id)) {
+									m_listModel->removeEntry(fr.id);
+									m_jobPanel->removeJobsForFile(fr.id);
+									removedIds.insert(fr.id);
+								}
+							}
+						}
+						deleteFoldersAsync(folderSet.values(), totalBytes);
+						m_statusLabel->setText(tr("Deleted %1 folder(s) (%2 file(s)) from disk")
+						    .arg(folderSet.size()).arg(removedIds.size()));
+						return;
+					}
+
+					const bool deleteFromDisk = (choice == RemoveFileChoice::DeleteFiles);
 					int removed = 0;
 					for (qint64 fid : allMemberIds) {
 						const auto fOpt = db.fileById(fid);
@@ -1792,26 +1920,49 @@ void McMainWindow::setupUi()
 			    ? tr("Remove %1 Files").arg(n)
 			    : tr("Remove File");
 			const QString body = n > 1
-			    ? tr("%1 files will be removed from MediaCurator. "
-			         "You can re-add them by scanning the folder again.").arg(n)
-			    : tr("\"%1\" will be removed from MediaCurator. "
-			         "You can re-add it by scanning the folder again.").arg(imdbFiles.first().filename);
+			    ? tr("%1 files will be removed from MediaCurator.").arg(n)
+			    : tr("\"%1\" will be removed from MediaCurator.").arg(imdbFiles.first().filename);
 
-			QMessageBox dlg(this);
-			dlg.setWindowTitle(title);
-			dlg.setText(body);
-			dlg.setIcon(QMessageBox::Question);
-			auto* deleteBtn = dlg.addButton(tr("Delete File from Disk"), QMessageBox::DestructiveRole);
-			auto* removeBtn = dlg.addButton(tr("Remove from Library Only"), QMessageBox::AcceptRole);
-			dlg.addButton(QMessageBox::Cancel);
-			dlg.setDefaultButton(QMessageBox::Cancel);
-			dlg.exec();
-
-			if (dlg.clickedButton() != deleteBtn && dlg.clickedButton() != removeBtn)
-				return;
-
-			const bool deleteFromDisk = (dlg.clickedButton() == deleteBtn);
 			auto& db = DatabaseManager::instance();
+			QSet<QString> folderSet;
+			for (const FileRecord& f : imdbFiles)
+				folderSet.insert(QFileInfo(f.path).absolutePath());
+			bool anyIsScanRoot = false;
+			for (const QString& folder : folderSet)
+				if (isConfiguredScanRoot(folder)) { anyIsScanRoot = true; break; }
+			const int folderCount = anyIsScanRoot ? 0 : folderSet.size();
+
+			const auto choice = showRemoveFileDialog(title, body, /*fileCount=*/n, folderCount);
+			if (choice == RemoveFileChoice::Cancelled) return;
+
+			if (choice == RemoveFileChoice::DeleteFolders) {
+				qint64 totalBytes = 0;
+				QSet<qint64> removedIds;
+				for (const QString& folder : folderSet) {
+					for (const FileRecord& fr : db.filesUnderPath(folder)) {
+						if (removedIds.contains(fr.id)) continue;
+						totalBytes += fr.sizeBytes;
+						db.deleteJobsForFile(fr.id);
+						if (db.deleteFile(fr.id)) {
+							m_listModel->removeEntry(fr.id);
+							m_jobPanel->removeJobsForFile(fr.id);
+							removedIds.insert(fr.id);
+						}
+					}
+				}
+				deleteFoldersAsync(folderSet.values(), totalBytes);
+				m_statusLabel->setText(tr("Deleted %1 folder(s) (%2 file(s)) from disk")
+				    .arg(folderSet.size()).arg(removedIds.size()));
+				const int remaining = m_listModel->rowCount();
+				if (remaining > 0) {
+					const QModelIndex next = m_listModel->index(qMin(firstSelRow, remaining - 1), 0);
+					m_listView->selectionModel()->setCurrentIndex(next, QItemSelectionModel::ClearAndSelect);
+					m_listView->scrollTo(next, QAbstractItemView::EnsureVisible);
+				}
+				return;
+			}
+
+			const bool deleteFromDisk = (choice == RemoveFileChoice::DeleteFiles);
 			int removed = 0;
 			for (const FileRecord& f : imdbFiles) {
 				db.deleteJobsForFile(f.id);

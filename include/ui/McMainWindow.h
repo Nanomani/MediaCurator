@@ -172,6 +172,15 @@ private:
 	bool analyzeSingleFile(qint64 fileId);
 	void setSubtitleLanguage(const FileRecord& file, const StreamRecord& stream, const QString& langCode);
 	void startDeepDolbyVisionScan(qint64 fileId, const QString& filePath, int streamIndex, int videoOrdinal);
+
+	// Shared "remove from library" confirmation for the Remove Edition/Movie/File
+	// actions. Widened so a long filename in `body` doesn't wrap across two lines
+	// (see the .cpp for the QMessageBox-widening trick). `fileCount`/`folderCount`
+	// pick singular/plural button labels; pass folderCount == 0 to omit the
+	// Delete-Folder(s) button entirely (e.g. it would target a configured scan root).
+	enum class RemoveFileChoice { Cancelled, RemoveFromLibrary, DeleteFiles, DeleteFolders };
+	RemoveFileChoice showRemoveFileDialog(const QString& title, const QString& body,
+	                                      int fileCount, int folderCount);
 #ifdef Q_OS_WIN
 	void setTaskbarProgress(int value, int total = 100);
 	void clearTaskbarProgress();

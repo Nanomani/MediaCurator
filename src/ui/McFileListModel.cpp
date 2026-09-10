@@ -1,5 +1,6 @@
 #include "ui/McFileListModel.h"
 #include "ui/McCardDelegate.h"
+#include "ui/McLanguageFlags.h"
 #include "core/DolbyVisionInfo.h"
 #include "core/AudioFormatInfo.h"
 
@@ -55,7 +56,7 @@ void McFileListModel::computeDerived(FileEntry& e)
 	e.storageGroup = StorageGroupSettings::groupForFilePath(e.file.path);
 
 	QString s;
-	s.reserve(128 + e.streams.size() * 32);
+	s.reserve(160 + e.streams.size() * 48);
 	s += e.file.filename;
 	s += QChar(' ');
 	s += e.dirName;
@@ -64,6 +65,26 @@ void McFileListModel::computeDerived(FileEntry& e)
 	s += QChar(' ');
 	s += e.file.originalLanguage;
 	s += QChar(' ');
+	if (!e.file.originalLanguage.isEmpty()) {
+		s += McLanguageFlags::displayName(e.file.originalLanguage);
+		s += QChar(' ');
+	}
+	// TMDB/user-assigned title+year, so a search matches what the card actually
+	// shows even when the filename follows a scene-release naming convention
+	// that doesn't spell out the real title. Kept in sync when title/year
+	// arrive after this entry was first built — see onTmdbDataReady().
+	if (!e.file.displayTitle.isEmpty()) {
+		s += e.file.displayTitle;
+		s += QChar(' ');
+	}
+	if (e.file.displayYear > 0) {
+		s += QString::number(e.file.displayYear);
+		s += QChar(' ');
+	}
+	if (!e.file.edition.isEmpty()) {
+		s += e.file.edition;
+		s += QChar(' ');
+	}
 	for (const StreamRecord& st : e.streams) {
 		s += st.codecName;
 		s += QChar(' ');
@@ -78,6 +99,10 @@ void McFileListModel::computeDerived(FileEntry& e)
 		s += QChar(' ');
 		s += st.language;
 		s += QChar(' ');
+		if (!st.language.isEmpty()) {
+			s += McLanguageFlags::displayName(st.language);
+			s += QChar(' ');
+		}
 	}
 	e.searchText = s.toLower();
 
@@ -678,6 +703,7 @@ void McFileListModel::onTmdbDataReady(qint64 fileId, const QString& title, int y
 		if (!title.isEmpty()) {
 			e.file.displayTitle = title;
 			e.file.displayYear  = year;
+			computeDerived(e);   // refresh searchText so the resolved title/year become searchable
 		}
 		if (!normalizedType.isEmpty()
 		    && normalizedType != QLatin1String(MediaTypes::Unknown))
@@ -685,12 +711,15 @@ void McFileListModel::onTmdbDataReady(qint64 fileId, const QString& title, int y
 		break;
 	}
 
+	bool searchTextChanged = false;
 	for (int row = 0; row < m_entries.size(); ++row) {
 		if (m_entries.at(row).file.id != fileId) continue;
 		auto& entry = m_entries[row];
 		if (!title.isEmpty()) {
 			entry.file.displayTitle = title;
 			entry.file.displayYear  = year;
+			computeDerived(entry);
+			searchTextChanged = true;
 		}
 		if (!normalizedType.isEmpty()
 		    && normalizedType != QLatin1String(MediaTypes::Unknown))
@@ -704,6 +733,8 @@ void McFileListModel::onTmdbDataReady(qint64 fileId, const QString& title, int y
 	const quint32 mediaMask = QF_Movie | QF_Tv | QF_Documentary | QF_Misc;
 	if ((m_quickFilters & mediaMask) && !normalizedType.isEmpty())
 		applyFilter();
+	else if (searchTextChanged && !m_filterTokens.isEmpty())
+		applyFilter();   // the newly-searchable title may change this entry's filter membership
 
 	if (!normalizedType.isEmpty()
 	    && normalizedType != QLatin1String(MediaTypes::Unknown))
