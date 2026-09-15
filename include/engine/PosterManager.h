@@ -100,6 +100,9 @@ signals:
 	// Fired whenever a TMDB numeric id is resolved and persisted (refresh(), or the
 	// background matcher's applyTmdbInfo). Lets the UI update the TMDB button immediately.
 	void tmdbIdSaved(qint64 fileId, int tmdbId);
+	// Fired whenever release dates (premiere/digital/physical) are resolved and
+	// persisted. Any of the three may be empty (unknown).
+	void releaseDatesReady(qint64 fileId, QString premiereDate, QString digitalDate, QString physicalDate);
 
 	// Batch refresh progress — driven by refreshBatch()/cancelBatch().
 	void batchProgressChanged(int done, int total);

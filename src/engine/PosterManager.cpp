@@ -249,6 +249,10 @@ signals:
 	void tmdbDataReady(qint64 fileId, QString title, int year, double rating, QString mediaType);
 	void imdbIdSaved(qint64 fileId, QString imdbId);
 	void tmdbIdSaved(qint64 fileId, int tmdbId);
+	// Fired whenever release dates (premiere/digital/physical) are resolved and
+	// persisted — lets the UI update without waiting for a restart. Any of the
+	// three may be empty (unknown).
+	void releaseDatesReady(qint64 fileId, QString premiereDate, QString digitalDate, QString physicalDate);
 	// Fired once per file after processFile() returns, regardless of outcome —
 	// drives PosterManager's batch-refresh progress tracking.
 	void fileProcessed(qint64 fileId);
@@ -357,6 +361,23 @@ private:
 			if (info.tmdbId > 0) {
 				DatabaseManager::instance().updateTmdbId(fileId, info.tmdbId);
 				emit tmdbIdSaved(fileId, info.tmdbId);
+			}
+			// Release dates (premiere/digital/physical) — movies only, one extra
+			// TMDB call, skipped once any of the three is already on record for
+			// this file (a movie with a genuinely empty date keeps retrying on
+			// every launch, same tolerance as the rating/title backfill above).
+			if (!info.isTv && info.tmdbId > 0) {
+				const bool needsDates = !existing || (existing->premiereDate.isEmpty()
+				                                    && existing->digitalDate.isEmpty()
+				                                    && existing->physicalDate.isEmpty());
+				if (needsDates) {
+					const ReleaseDates rd = fetchReleaseDates(info.tmdbId);
+					if (!rd.premiereDate.isEmpty() || !rd.digitalDate.isEmpty() || !rd.physicalDate.isEmpty()) {
+						DatabaseManager::instance().updateReleaseDates(
+						    fileId, rd.premiereDate, rd.digitalDate, rd.physicalDate);
+						emit releaseDatesReady(fileId, rd.premiereDate, rd.digitalDate, rd.physicalDate);
+					}
+				}
 			}
 		};
 
@@ -730,6 +751,52 @@ private:
 
 	// TMDB genre id 99 = Documentary (movies and TV).
 	static constexpr int kGenreDocumentary = 99;
+
+	// TMDB /movie/{id}/release_dates result, US region only. type: 1=Premiere,
+	// 2=Theatrical (limited), 3=Theatrical, 4=Digital, 5=Physical, 6=TV.
+	struct ReleaseDates {
+		QString premiereDate;  // best theatrical date: type 3, else 2, else 1
+		QString digitalDate;   // type 4
+		QString physicalDate;  // type 5
+	};
+
+	// TV has no equivalent endpoint, so this is only ever called for movies.
+	ReleaseDates fetchReleaseDates(int tmdbId)
+	{
+		ReleaseDates out;
+		QByteArray data;
+		if (!fetchHttp(QUrl(QStringLiteral(
+		        "https://api.themoviedb.org/3/movie/%1/release_dates?api_key=%2")
+		        .arg(tmdbId).arg(m_tmdbApiKey)), data))
+			return out;
+
+		QJsonObject usEntry;
+		for (const QJsonValue& v : QJsonDocument::fromJson(data)["results"].toArray()) {
+			if (v.toObject()[QStringLiteral("iso_3166_1")].toString() == QLatin1String("US")) {
+				usEntry = v.toObject();
+				break;
+			}
+		}
+		if (usEntry.isEmpty()) return out;
+
+		QString premiere, theatricalLimited;
+		for (const QJsonValue& v : usEntry[QStringLiteral("release_dates")].toArray()) {
+			const QJsonObject rd = v.toObject();
+			const QString date = rd[QStringLiteral("release_date")].toString().left(10); // strip time-of-day
+			if (date.isEmpty()) continue;
+			switch (rd[QStringLiteral("type")].toInt()) {
+			case 1: if (premiere.isEmpty())          premiere          = date; break;
+			case 2: if (theatricalLimited.isEmpty()) theatricalLimited = date; break;
+			case 3: if (out.premiereDate.isEmpty())  out.premiereDate  = date; break;
+			case 4: if (out.digitalDate.isEmpty())   out.digitalDate   = date; break;
+			case 5: if (out.physicalDate.isEmpty())  out.physicalDate  = date; break;
+			default: break;
+			}
+		}
+		if (out.premiereDate.isEmpty())
+			out.premiereDate = !theatricalLimited.isEmpty() ? theatricalLimited : premiere;
+		return out;
+	}
 
 	static bool jsonHasGenre(const QJsonObject& obj, int genreId)
 	{
@@ -1122,6 +1189,8 @@ void PosterManager::startWorkerPool()
 		        this,     &PosterManager::imdbIdSaved);
 		connect(worker, &PosterWorker::tmdbIdSaved,
 		        this,     &PosterManager::tmdbIdSaved);
+		connect(worker, &PosterWorker::releaseDatesReady,
+		        this,     &PosterManager::releaseDatesReady);
 		connect(worker, &PosterWorker::fileProcessed,
 		        this, [this](qint64 fileId) {
 			if (!m_batchActive || !m_batchIds.remove(fileId)) return;

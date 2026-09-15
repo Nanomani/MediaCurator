@@ -140,6 +140,13 @@ public slots:
 	// dialog-tunable; see AppSettings key "library/fanartOpacity".
 	void setFanartOpacity(double opacity);
 
+	// Current library sort order (McFileListModel::SortOrder) — only consulted to
+	// decide whether the title row should also show a release-date label (see
+	// paint()). When sorting by premiere/digital/physical date, that date is shown
+	// next to the "(year)" suffix; otherwise no date is drawn, matching how the
+	// user asked for this info to appear only while actively sorted by it.
+	void setActiveDateSortOrder(int order);
+
 signals:
 	void playRequested(const QModelIndex& index);
 	void imdbPageRequested(const QModelIndex& index);
@@ -183,6 +190,10 @@ private:
 		double              rating         = 0.0;   // TMDB vote_average; 0 = unknown
 		QString             displayTitle;           // TMDB/user override (Library only)
 		int                 displayYear    = 0;    // release year from TMDB, 0 = unknown (Library only)
+		// TMDB release_dates (US region), ISO YYYY-MM-DD, empty = unknown (Library only)
+		QString             premiereDate;
+		QString             digitalDate;
+		QString             physicalDate;
 		QString             edition;                // detected/user edition (e.g. "3D"); empty = undetected (Library only)
 		QString             mediaType;              // MediaTypes::* (Library only; empty = unknown)
 		QString             containerTitle;         // ffprobe format tags title (Library only)
@@ -312,6 +323,7 @@ private:
 
 	Mode                  m_mode;
 	bool                  m_tmdbConfigured   = true;
+	int                   m_activeDateSortOrder = -1;  // McFileListModel::SortOrder; -1 = none active
 	bool                  m_showGroupBadge   = false;
 	double                m_fanartOpacity    = 0.05;
 	QAbstractItemView*    m_view             = nullptr;

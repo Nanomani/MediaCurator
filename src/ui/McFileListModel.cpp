@@ -259,6 +259,19 @@ bool McFileListModel::entryLessThan(const FileEntry& a, const FileEntry& b) cons
 	case SortByRatingHigh: return m_ratings.value(a.file.id, 0.0) > m_ratings.value(b.file.id, 0.0);
 	case SortByRatingLow:  return m_ratings.value(a.file.id, 0.0) < m_ratings.value(b.file.id, 0.0);
 	case SortByLastScanned:return a.file.scanTime    > b.file.scanTime;
+	case SortByYearNewest: return a.file.displayYear > b.file.displayYear;
+	case SortByYearOldest: {
+		// Unknown year (0) sorts last regardless of direction, not first.
+		const int ay = a.file.displayYear, by = b.file.displayYear;
+		if (ay == 0 || by == 0) return (by == 0) && (ay != 0);
+		return ay < by;
+	}
+	// TMDB release_dates (US region) — ISO strings compare lexically like dates;
+	// an empty (unknown) string is always the lowest value, so it sorts last here
+	// with no special-casing needed (unlike SortByYearOldest's ascending order).
+	case SortByPremiereNewest: return m_premiereDates.value(a.file.id) > m_premiereDates.value(b.file.id);
+	case SortByDigitalNewest:  return m_digitalDates.value(a.file.id)  > m_digitalDates.value(b.file.id);
+	case SortByPhysicalNewest: return m_physicalDates.value(a.file.id) > m_physicalDates.value(b.file.id);
 	default:               // SortByName
 		return a.file.filename.compare(b.file.filename, Qt::CaseInsensitive) < 0;
 	}
@@ -467,7 +480,8 @@ void McFileListModel::reload()
 		m_allEntries.append(e);
 	}
 
-	db.loadPosterMeta(m_posterPaths, m_imdbIds, m_ratings, m_fanartPaths, m_tmdbIds);
+	db.loadPosterMeta(m_posterPaths, m_imdbIds, m_ratings, m_fanartPaths, m_tmdbIds,
+	                  m_premiereDates, m_digitalDates, m_physicalDates);
 	m_forcedRemovals = db.allStreamForcedRemovals();
 
 	recomputeFolderCounts();
@@ -498,7 +512,10 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
                                const QSet<qint64>& filesWithJobs,
                                const QHash<qint64, double>& ratings,
                                const QHash<qint64, QString>& fanartPaths,
-                               const QHash<qint64, int>& tmdbIds)
+                               const QHash<qint64, int>& tmdbIds,
+                               const QHash<qint64, QString>& premiereDates,
+                               const QHash<qint64, QString>& digitalDates,
+                               const QHash<qint64, QString>& physicalDates)
 {
 	m_posterPaths    = posterPaths;
 	m_imdbIds        = imdbIds;
@@ -508,8 +525,11 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 		// Only query on first population to avoid repeated small queries during background meta delivery.
 		m_forcedRemovals = DatabaseManager::instance().allStreamForcedRemovals();
 	}
-	if (!ratings.isEmpty())     m_ratings     = ratings;
-	if (!fanartPaths.isEmpty()) m_fanartPaths = fanartPaths;
+	if (!ratings.isEmpty())       m_ratings       = ratings;
+	if (!fanartPaths.isEmpty())   m_fanartPaths   = fanartPaths;
+	if (!premiereDates.isEmpty()) m_premiereDates = premiereDates;
+	if (!digitalDates.isEmpty())  m_digitalDates  = digitalDates;
+	if (!physicalDates.isEmpty()) m_physicalDates = physicalDates;
 	bool tmdbIdsChanged = false;
 	if (!tmdbIds.isEmpty())     { m_tmdbIds = tmdbIds; tmdbIdsChanged = true; }
 	if (tmdbIdsChanged)
@@ -518,7 +538,7 @@ void McFileListModel::initMeta(const QHash<qint64, QString>& posterPaths,
 		const QList<int> roles = {
 			FanartRole, PosterRole, PosterVersionRole,
 			DisplayTitleRole, DisplayYearRole, RatingRole, ImdbRole, TmdbRole,
-			JobStatusRole
+			JobStatusRole, PremiereDateRole, DigitalDateRole, PhysicalDateRole
 		};
 		emit dataChanged(index(0), index(m_entries.size() - 1), roles);
 	}
@@ -773,6 +793,29 @@ void McFileListModel::onTmdbIdSaved(qint64 fileId, int tmdbId)
 	}
 }
 
+void McFileListModel::onReleaseDatesReady(qint64 fileId, const QString& premiereDate,
+                                          const QString& digitalDate, const QString& physicalDate)
+{
+	if (!premiereDate.isEmpty()) m_premiereDates[fileId] = premiereDate;
+	if (!digitalDate.isEmpty())  m_digitalDates[fileId]  = digitalDate;
+	if (!physicalDate.isEmpty()) m_physicalDates[fileId] = physicalDate;
+	// One of the active date-sort orders may now need this row moved — cheap to
+	// just re-sort/refilter since this fires rarely (once per file, on first match).
+	if (m_sortOrder == SortByPremiereNewest || m_sortOrder == SortByDigitalNewest
+	    || m_sortOrder == SortByPhysicalNewest) {
+		sortAllEntries();
+		applyFilter(/*forceFullReset=*/true);
+		return;
+	}
+	for (int row = 0; row < m_entries.size(); ++row) {
+		if (m_entries.at(row).file.id == fileId) {
+			const QModelIndex idx = index(row);
+			emit dataChanged(idx, idx, { PremiereDateRole, DigitalDateRole, PhysicalDateRole });
+			break;
+		}
+	}
+}
+
 void McFileListModel::setFilterMissingImdb(bool on)
 {
 	if (m_filterMissingImdb == on) return;
@@ -967,6 +1010,9 @@ QVariant McFileListModel::data(const QModelIndex& index, int role) const
 	case JobStatusRole:     return m_jobStatusByFile.value(e.file.id);
 	case TmdbRole:          return m_tmdbIds.value(e.file.id, 0);
 	case RatingRole:        return m_ratings.value(e.file.id, 0.0);
+	case PremiereDateRole:  return m_premiereDates.value(e.file.id);
+	case DigitalDateRole:   return m_digitalDates.value(e.file.id);
+	case PhysicalDateRole:  return m_physicalDates.value(e.file.id);
 	case DisplayTitleRole:  return e.file.displayTitle;
 	case DisplayYearRole:   return e.file.displayYear;
 	case ContainerTitleRole:return e.file.containerTitle;

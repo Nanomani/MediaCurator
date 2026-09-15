@@ -20,8 +20,10 @@ void LibraryLoader::run()
 	QHash<qint64, QString> posters, imdbs, fanarts;
 	QHash<qint64, double> ratings;
 	QHash<qint64, int> tmdbIds;
-	db.loadPosterMeta(posters, imdbs, ratings, fanarts, tmdbIds);
-	emit metaReady(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts, tmdbIds);
+	QHash<qint64, QString> premiereDates, digitalDates, physicalDates;
+	db.loadPosterMeta(posters, imdbs, ratings, fanarts, tmdbIds, premiereDates, digitalDates, physicalDates);
+	emit metaReady(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts, tmdbIds,
+	               premiereDates, digitalDates, physicalDates);
 
 	int offset    = m_startOffset;
 	int pageIndex = 0;

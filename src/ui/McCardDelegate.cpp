@@ -501,6 +501,9 @@ McCardDelegate::CardData McCardDelegate::fetchData(const QModelIndex& index) con
 		d.rating           = index.data(McFileListModel::RatingRole).toDouble();
 		d.displayTitle      = index.data(McFileListModel::DisplayTitleRole).toString();
 		d.displayYear       = index.data(McFileListModel::DisplayYearRole).toInt();
+		d.premiereDate      = index.data(McFileListModel::PremiereDateRole).toString();
+		d.digitalDate       = index.data(McFileListModel::DigitalDateRole).toString();
+		d.physicalDate      = index.data(McFileListModel::PhysicalDateRole).toString();
 		d.edition           = file.edition;
 		d.mediaType         = file.mediaType;
 		d.containerTitle    = index.data(McFileListModel::ContainerTitleRole).toString();
@@ -1887,6 +1890,15 @@ void McCardDelegate::setFanartOpacity(double opacity)
 	if (m_view) m_view->viewport()->update();
 }
 
+void McCardDelegate::setActiveDateSortOrder(int order)
+{
+	if (m_activeDateSortOrder == order) return;
+	m_activeDateSortOrder = order;
+	// No size-cache invalidation — the title row's height is fixed regardless of
+	// whether the date label is drawn; only the paint needs to change.
+	if (m_view) m_view->viewport()->update();
+}
+
 // ── paint ─────────────────────────────────────────────────────────────────────
 
 void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
@@ -2133,6 +2145,32 @@ void McCardDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option
 			painter->setFont(titleFont);
 			painter->setPen(textColor);
 			painter->drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, smartTitle);
+		}
+
+		// Release date — only while actively sorted by that specific TMDB date
+		// (premiere/digital/physical); which one is already conveyed by the sort
+		// dropdown, so just the date is shown, no repeated label. Drawn last, at a
+		// fixed position (the row's horizontal midpoint) so it never shifts with
+		// title length like the rest of the row does.
+		QString activeDateIso;
+		switch (m_activeDateSortOrder) {
+		case McFileListModel::SortByPremiereNewest: activeDateIso = d.premiereDate; break;
+		case McFileListModel::SortByDigitalNewest:  activeDateIso = d.digitalDate;  break;
+		case McFileListModel::SortByPhysicalNewest: activeDateIso = d.physicalDate; break;
+		default: break;
+		}
+		if (!activeDateIso.isEmpty()) {
+			const QDate date = QDate::fromString(activeDateIso, Qt::ISODate);
+			const QString shown = date.isValid()
+			    ? QLocale::system().toString(date, QStringLiteral("MMM d, yyyy")) : activeDateIso;
+			static constexpr int kDateLabelW = 110;
+			const int midX = folderRect.left() + folderRect.width() / 2;
+			const QRect dateRect(midX - kDateLabelW / 2, folderRect.top(), kDateLabelW, folderRect.height());
+			painter->save();
+			painter->setFont(metaFont);
+			painter->setPen(dimColor);
+			painter->drawText(dateRect, Qt::AlignCenter | Qt::TextSingleLine, shown);
+			painter->restore();
 		}
 	}
 

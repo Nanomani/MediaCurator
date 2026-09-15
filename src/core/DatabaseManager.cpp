@@ -613,6 +613,16 @@ bool DatabaseManager::initSchema()
 		m.exec("CREATE INDEX IF NOT EXISTS idx_files_dv_checked ON files(dv_checked)");
 	}
 
+	// Migration: TMDB release_dates (US region) — premiere/theatrical, digital, and
+	// physical dates, so the library can sort by them (see McFileListModel::SortOrder).
+	// Movies only; empty for tv rows since TMDB has no equivalent endpoint for those.
+	{
+		QSqlQuery m(connection());
+		m.exec("ALTER TABLE poster_cache ADD COLUMN premiere_date TEXT NOT NULL DEFAULT ''");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN digital_date TEXT NOT NULL DEFAULT ''");
+		m.exec("ALTER TABLE poster_cache ADD COLUMN physical_date TEXT NOT NULL DEFAULT ''");
+	}
+
 	return true;
 }
 
@@ -898,20 +908,32 @@ QList<FileRecord> DatabaseManager::allFilesPaged(int offset, int limit, int sort
 	QSqlQuery q(connection());
 
 	QString orderBy;
-	bool    needsRatingJoin = false;
+	bool    needsPosterCacheJoin = false;
 	switch (sortOrder) {
 	case 1: orderBy = QStringLiteral("f.created_ms DESC");             break; // SortByNewest
 	case 2: orderBy = QStringLiteral("f.created_ms ASC");              break; // SortByOldest
 	case 3: orderBy = QStringLiteral("f.size_bytes DESC");             break; // SortByLargest
 	case 4: orderBy = QStringLiteral("COALESCE(pc.vote_average, 0.0) DESC");
-	        needsRatingJoin = true;                                   break; // SortByRatingHigh
+	        needsPosterCacheJoin = true;                               break; // SortByRatingHigh
 	case 5: orderBy = QStringLiteral("COALESCE(pc.vote_average, 0.0) ASC");
-	        needsRatingJoin = true;                                   break; // SortByRatingLow
+	        needsPosterCacheJoin = true;                               break; // SortByRatingLow
 	case 6: orderBy = QStringLiteral("f.scan_time DESC");              break; // SortByLastScanned
+	case 8: orderBy = QStringLiteral("f.display_year DESC");           break; // SortByYearNewest
+	case 9: orderBy = QStringLiteral("CASE WHEN f.display_year = 0 THEN 1 ELSE 0 END ASC, "
+	                                  "f.display_year ASC");           break; // SortByYearOldest (unknown last)
+	case 10: orderBy = QStringLiteral("CASE WHEN COALESCE(pc.premiere_date, '') = '' THEN 1 ELSE 0 END ASC, "
+	                                   "pc.premiere_date DESC");
+	         needsPosterCacheJoin = true;                              break; // SortByPremiereNewest
+	case 11: orderBy = QStringLiteral("CASE WHEN COALESCE(pc.digital_date, '') = '' THEN 1 ELSE 0 END ASC, "
+	                                   "pc.digital_date DESC");
+	         needsPosterCacheJoin = true;                              break; // SortByDigitalNewest
+	case 12: orderBy = QStringLiteral("CASE WHEN COALESCE(pc.physical_date, '') = '' THEN 1 ELSE 0 END ASC, "
+	                                   "pc.physical_date DESC");
+	         needsPosterCacheJoin = true;                              break; // SortByPhysicalNewest
 	default: orderBy = QStringLiteral("f.filename COLLATE NOCASE ASC"); break; // SortByName
 	}
 
-	const QString sql = needsRatingJoin
+	const QString sql = needsPosterCacheJoin
 	    ? QStringLiteral("SELECT f.* FROM files f LEFT JOIN poster_cache pc ON pc.file_id = f.id "
 	                      "ORDER BY %1 LIMIT ? OFFSET ?").arg(orderBy)
 	    : QStringLiteral("SELECT f.* FROM files f ORDER BY %1 LIMIT ? OFFSET ?").arg(orderBy);
@@ -2449,8 +2471,8 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 {
 	QSqlQuery q(connection());
 	q.prepare(R"(
-		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count, attempt_count, nfo_written)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO poster_cache(file_id, source, status, image_path, fanart_path, imdb_id, tmdb_id, fetched_at, vote_average, vote_count, attempt_count, nfo_written, premiere_date, digital_date, physical_date)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_id) DO UPDATE SET
 			source=excluded.source,
 			status=excluded.status,
@@ -2462,7 +2484,10 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 			vote_average=CASE WHEN excluded.vote_average > 0 THEN excluded.vote_average ELSE vote_average END,
 			vote_count=CASE WHEN excluded.vote_count > 0 THEN excluded.vote_count ELSE vote_count END,
 			attempt_count=excluded.attempt_count,
-			nfo_written=CASE WHEN excluded.nfo_written != 0 THEN 1 ELSE nfo_written END
+			nfo_written=CASE WHEN excluded.nfo_written != 0 THEN 1 ELSE nfo_written END,
+			premiere_date=CASE WHEN excluded.premiere_date != '' THEN excluded.premiere_date ELSE premiere_date END,
+			digital_date=CASE WHEN excluded.digital_date != '' THEN excluded.digital_date ELSE digital_date END,
+			physical_date=CASE WHEN excluded.physical_date != '' THEN excluded.physical_date ELSE physical_date END
 	)");
 	// Bind empty string (not null) — Qt maps null QString → SQL NULL which violates NOT NULL
 	auto nn = [](const QString& s) { return s.isNull() ? QString("") : s; };
@@ -2478,6 +2503,9 @@ void DatabaseManager::upsertPosterRecord(const PosterRecord& rec)
 	q.addBindValue(rec.voteCount);
 	q.addBindValue(rec.attemptCount);
 	q.addBindValue(rec.nfoWritten ? 1 : 0);
+	q.addBindValue(nn(rec.premiereDate));
+	q.addBindValue(nn(rec.digitalDate));
+	q.addBindValue(nn(rec.physicalDate));
 	if (!q.exec())
 		qWarning() << "upsertPosterRecord failed:" << q.lastError().text();
 }
@@ -2497,7 +2525,7 @@ void DatabaseManager::markNfoWritten(qint64 fileId)
 std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 {
 	QSqlQuery q(connection());
-	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id,attempt_count,nfo_written FROM poster_cache WHERE file_id=?");
+	q.prepare("SELECT source,status,image_path,fanart_path,imdb_id,fetched_at,vote_average,vote_count,tmdb_id,attempt_count,nfo_written,premiere_date,digital_date,physical_date FROM poster_cache WHERE file_id=?");
 	q.addBindValue(fileId);
 	if (!q.exec() || !q.next()) return {};
 	PosterRecord r;
@@ -2513,6 +2541,9 @@ std::optional<PosterRecord> DatabaseManager::posterForFile(qint64 fileId) const
 	r.tmdbId      = q.value(8).toInt();
 	r.attemptCount = q.value(9).toInt();
 	r.nfoWritten  = q.value(10).toInt() != 0;
+	r.premiereDate = q.value(11).toString();
+	r.digitalDate  = q.value(12).toString();
+	r.physicalDate = q.value(13).toString();
 	return r;
 }
 
@@ -2594,6 +2625,27 @@ void DatabaseManager::updateTmdbId(qint64 fileId, int tmdbId)
 		qWarning() << "updateTmdbId failed:" << q.lastError().text();
 }
 
+void DatabaseManager::updateReleaseDates(qint64 fileId, const QString& premiereDate,
+                                         const QString& digitalDate, const QString& physicalDate)
+{
+	QSqlQuery q(connection());
+	// Upsert a minimal row if none exists, or update just the date columns on conflict.
+	q.prepare(R"(
+		INSERT INTO poster_cache(file_id, source, status, image_path, fetched_at, premiere_date, digital_date, physical_date)
+		VALUES(?, '', 'pending', '', 0, ?, ?, ?)
+		ON CONFLICT(file_id) DO UPDATE SET
+			premiere_date = excluded.premiere_date,
+			digital_date  = excluded.digital_date,
+			physical_date = excluded.physical_date
+	)");
+	q.addBindValue(fileId);
+	q.addBindValue(premiereDate);
+	q.addBindValue(digitalDate);
+	q.addBindValue(physicalDate);
+	if (!q.exec())
+		qWarning() << "updateReleaseDates failed:" << q.lastError().text();
+}
+
 void DatabaseManager::clearPosterPath(const QString& imagePath)
 {
 	QSqlQuery q(connection());
@@ -2663,12 +2715,16 @@ void DatabaseManager::loadPosterMeta(QHash<qint64, QString>& posterPaths,
                                      QHash<qint64, QString>& imdbIds,
                                      QHash<qint64, double>& ratings,
                                      QHash<qint64, QString>& fanartPaths,
-                                     QHash<qint64, int>& tmdbIds) const
+                                     QHash<qint64, int>& tmdbIds,
+                                     QHash<qint64, QString>& premiereDates,
+                                     QHash<qint64, QString>& digitalDates,
+                                     QHash<qint64, QString>& physicalDates) const
 {
 	QSqlQuery q(connection());
 	// Single pass over poster_cache for the common startup meta.
 	// Individual methods are kept for targeted use.
-	q.exec("SELECT file_id, image_path, imdb_id, vote_average, fanart_path, tmdb_id FROM poster_cache");
+	q.exec("SELECT file_id, image_path, imdb_id, vote_average, fanart_path, tmdb_id, "
+	       "premiere_date, digital_date, physical_date FROM poster_cache");
 	while (q.next()) {
 		const qint64 id = q.value(0).toLongLong();
 
@@ -2691,6 +2747,18 @@ void DatabaseManager::loadPosterMeta(QHash<qint64, QString>& posterPaths,
 		const int tmdb = q.value(5).toInt();
 		if (tmdb > 0)
 			tmdbIds.insert(id, tmdb);
+
+		const QString premiere = q.value(6).toString();
+		if (!premiere.isEmpty())
+			premiereDates.insert(id, premiere);
+
+		const QString digital = q.value(7).toString();
+		if (!digital.isEmpty())
+			digitalDates.insert(id, digital);
+
+		const QString physical = q.value(8).toString();
+		if (!physical.isEmpty())
+			physicalDates.insert(id, physical);
 	}
 }
 

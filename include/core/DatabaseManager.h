@@ -183,6 +183,11 @@ struct PosterRecord {
 	int     voteCount   = 0;
 	int     attemptCount = 0;  // consecutive no_poster resolve attempts; see kMaxPosterResolveAttempts
 	bool    nfoWritten   = false;  // MediaCurator has written this file's .nfo — see markNfoWritten()
+	// TMDB /movie/{id}/release_dates, US region — ISO YYYY-MM-DD, empty = unknown.
+	// Movies only; TV has no equivalent so these stay empty for tv rows.
+	QString premiereDate;   // best theatrical date: type 3 (Theatrical), else 2, else 1 (Premiere)
+	QString digitalDate;    // type 4 (Digital)
+	QString physicalDate;   // type 5 (Physical)
 };
 
 // For display in McJobPanel (jobs JOIN files JOIN poster_cache)
@@ -259,8 +264,9 @@ public:
 	// touched yet, unlike "Analyze Library" which re-evaluates everything.
 	QList<FileRecord> filesWithoutAnyJob() const;
 	// sortOrder mirrors Mc::McFileListModel::SortOrder (0=Name, 1=Newest, 2=Oldest,
-	// 3=Largest, 4=RatingHigh, 5=RatingLow) — duplicated as a plain int here so this
-	// core class doesn't depend on a UI header. Callers must keep pages in the same
+	// 3=Largest, 4=RatingHigh, 5=RatingLow, 6=LastScanned, 8=YearNewest, 9=YearOldest,
+	// 10=PremiereNewest, 11=DigitalNewest, 12=PhysicalNewest) — duplicated as a plain
+	// int here so this core class doesn't depend on a UI header. Callers must keep pages in the same
 	// order the model itself sorts by (McFileListModel::sortOrder()), or the "first
 	// page" loaded synchronously at startup won't match what's actually about to
 	// land in the viewport, and every later background page reshuffles rows above
@@ -432,13 +438,21 @@ public:
 	                    QHash<qint64, QString>& imdbIds,
 	                    QHash<qint64, double>& ratings,
 	                    QHash<qint64, QString>& fanartPaths,
-	                    QHash<qint64, int>& tmdbIds) const;
+	                    QHash<qint64, int>& tmdbIds,
+	                    QHash<qint64, QString>& premiereDates,
+	                    QHash<qint64, QString>& digitalDates,
+	                    QHash<qint64, QString>& physicalDates) const;
 
 	void                        resetPosterForFile(qint64 fileId);
 	void                        clearPosterPath(const QString& imagePath);
 	void                        clearFanartPath(const QString& fanartPath);
 	void                        updateImdbId(qint64 fileId, const QString& imdbId);
 	void                        updateTmdbId(qint64 fileId, int tmdbId);
+	// Persists TMDB release_dates (US region) — see PosterRecord's date fields.
+	// Empty strings are written as-is (no "don't clobber" merge); a caller that
+	// already checked the existing record decides whether to skip the call.
+	void                        updateReleaseDates(qint64 fileId, const QString& premiereDate,
+	                                              const QString& digitalDate, const QString& physicalDate);
 	void                        resetNoPosterRecords();
 
 	// ── Startup cleanup ──────────────────────────────────────────────────────

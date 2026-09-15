@@ -316,10 +316,15 @@ static void removeSidecarFiles(const QString& videoPath)
 	const QDir dir = info.dir();
 	const QString base = info.completeBaseName();
 	if (base.isEmpty()) return;
-	const QStringList filters = { base + QStringLiteral(".*") };
-	const QStringList entries = dir.entryList(filters, QDir::Files);
+	// Matched via a literal prefix rather than a QDir glob filter — release
+	// names routinely contain '[', ']', or '?' (e.g. "Movie (2020) [1080p].mkv"),
+	// which the glob matcher treats as wildcard metacharacters, so a pattern
+	// built from the raw name silently matched nothing and left sidecars behind.
+	const QString prefix = base + QChar(u'.');
+	const QStringList entries = dir.entryList(QDir::Files);
 	for (const QString& entry : entries) {
 		if (entry.compare(info.fileName(), Qt::CaseInsensitive) == 0) continue;
+		if (!entry.startsWith(prefix, Qt::CaseInsensitive)) continue;
 		QFile::remove(dir.filePath(entry));
 	}
 }
@@ -475,8 +480,13 @@ McMainWindow::McMainWindow(QWidget* parent)
 	{
 		const int saved = AppSettings::instance().value("library/sortOrder", McFilterPanel::SortByName).toInt();
 		const int idx   = m_filterPanel->sortCombo()->findData(saved);
-		if (idx > 0)
+		if (idx > 0) {
 			m_filterPanel->sortCombo()->setCurrentIndex(idx);
+			// setCurrentIndex above predates the sortOrderChanged connection made
+			// later in the constructor, so it won't reach the delegate on its own.
+			if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+				d->setActiveDateSortOrder(saved);
+		}
 	}
 	if (const QByteArray sp = s.value("mainWindow/splitter").toByteArray(); !sp.isEmpty()) {
 		m_splitter->restoreState(sp);
@@ -709,6 +719,8 @@ McMainWindow::McMainWindow(QWidget* parent)
 	        m_listModel, &McFileListModel::onTmdbIdSaved);
 	connect(&pm, &PosterManager::tmdbDataReady,
 	        m_listModel, &McFileListModel::onTmdbDataReady);
+	connect(&pm, &PosterManager::releaseDatesReady,
+	        m_listModel, &McFileListModel::onReleaseDatesReady);
 	// Keep job-card media types (and category pills) current during enrichment.
 	connect(&pm, &PosterManager::tmdbDataReady, this,
 	        [this](qint64 fileId, const QString&, int, double, const QString& mediaType) {
@@ -2022,7 +2034,11 @@ void McMainWindow::setupUi()
 	connect(m_filterPanel, &McFilterPanel::quickFiltersChanged,
 	        m_listModel, &McFileListModel::setQuickFilters);
 	connect(m_filterPanel, &McFilterPanel::sortOrderChanged,
-	        m_listModel, &McFileListModel::setSortOrder);
+	        this, [this](int order) {
+		m_listModel->setSortOrder(order);
+		if (auto* d = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
+			d->setActiveDateSortOrder(order);
+	});
 	connect(m_filterPanel, &McFilterPanel::ratingFilterChanged,
 	        m_listModel, &McFileListModel::setRatingFilter);
 	connect(m_filterPanel, &McFilterPanel::storageGroupFilterChanged,
@@ -3417,6 +3433,16 @@ void McMainWindow::closeEvent(QCloseEvent* event)
 	m_closeHandled = true;
 	logRestartDebug(QStringLiteral("closeEvent: teardown complete, accepting close"));
 	event->accept();
+
+	// Don't rely on Qt's automatic quitOnLastWindowClosed detection: it only
+	// fires when the window was still visible at the moment its close event
+	// began processing (QWindowPrivate::handleCloseEvent snapshots isVisible()
+	// before dispatching to closeEvent()). minimizeToTray() hides this window
+	// directly, bypassing closeEvent — so a close() delivered later while the
+	// window is already hidden (e.g. the deferred close after "Quit After"
+	// finishes its job, or Exit from the tray menu) is seen as "was never
+	// visible" and never triggers the auto-quit. Quit explicitly instead.
+	QCoreApplication::quit();
 }
 
 void McMainWindow::showEvent(QShowEvent* event)
@@ -3826,8 +3852,10 @@ void McMainWindow::startLibraryLoader()
 	QHash<qint64, QString> posters, imdbs, fanarts;
 	QHash<qint64, double> ratings;
 	QHash<qint64, int> tmdbIds;
-	db.loadPosterMeta(posters, imdbs, ratings, fanarts, tmdbIds);
-	m_listModel->initMeta(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts, tmdbIds);
+	QHash<qint64, QString> premiereDates, digitalDates, physicalDates;
+	db.loadPosterMeta(posters, imdbs, ratings, fanarts, tmdbIds, premiereDates, digitalDates, physicalDates);
+	m_listModel->initMeta(posters, imdbs, db.proposedJobFileIds(), ratings, fanarts, tmdbIds,
+	                       premiereDates, digitalDates, physicalDates);
 
 	// ── First page: library + queue (synchronous, splash still visible) ───────
 	// Must use the same sort order the model itself sorts by (persisted setting,
@@ -3917,8 +3945,12 @@ void McMainWindow::startLibraryLoader()
 	               const QSet<qint64>& filesWithJobs,
 	               const QHash<qint64, double>& ratings,
 	               const QHash<qint64, QString>& fanartPaths,
-	               const QHash<qint64, int>& tmdbIds) {
-		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings, fanartPaths, tmdbIds);
+	               const QHash<qint64, int>& tmdbIds,
+	               const QHash<qint64, QString>& premiereDates,
+	               const QHash<qint64, QString>& digitalDates,
+	               const QHash<qint64, QString>& physicalDates) {
+		m_listModel->initMeta(posters, imdbIds, filesWithJobs, ratings, fanartPaths, tmdbIds,
+		                       premiereDates, digitalDates, physicalDates);
 		if (auto* cardDelegate = qobject_cast<McFileCardDelegate*>(m_listView->itemDelegate()))
 			cardDelegate->prefetchVisibleArtwork();
 	});

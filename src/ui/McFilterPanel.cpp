@@ -47,7 +47,10 @@ public:
 	{
 		const QString text = idx.data(Qt::DisplayRole).toString();
 		// Row 0 is always the header label regardless of model enabled state.
-		if (idx.row() == 0) {
+		// Any other disabled row (group separators in longer dropdowns, e.g. the
+		// sort combo's "Date Added" / "Rating" / "Release" group labels) renders
+		// the same way.
+		if (idx.row() == 0 || !(idx.flags() & Qt::ItemIsEnabled)) {
 			p->fillRect(opt.rect, opt.palette.base().color());
 			p->setFont(opt.font);
 			p->setPen(opt.palette.placeholderText().color());
@@ -274,25 +277,49 @@ McFilterPanel::McFilterPanel(QWidget* parent) : QWidget(parent)
 	lay->addWidget(vSep(this));
 	m_sortCombo = new QComboBox(this);
 	m_sortCombo->setItemDelegate(new McFlatComboDelegate(m_sortCombo));
-	m_sortCombo->addItem(tr("Sorting"),      QVariant());        // 0: header
-	m_sortCombo->addItem(tr("Name"),         SortByName);       // 1
-	m_sortCombo->addItem(tr("Newest first"), SortByNewest);     // 2
-	m_sortCombo->addItem(tr("Oldest first"), SortByOldest);     // 3
-	m_sortCombo->addItem(tr("Largest"),      SortByLargest);    // 4
-	m_sortCombo->addItem(tr("Rating ↓"),     SortByRatingHigh); // 5
-	m_sortCombo->addItem(tr("Rating ↑"),     SortByRatingLow);  // 6
-	m_sortCombo->addItem(tr("Last scanned"), SortByLastScanned);// 7
-	m_sortCombo->addItem(tr("Group by Movie"), GroupedByEdition);// 8
-	if (auto* m = qobject_cast<QStandardItemModel*>(m_sortCombo->model()))
-		if (auto* item = m->item(0))
-			item->setEnabled(false);
-	m_sortCombo->setCurrentIndex(1);
+	// Grouped with disabled section-label rows (McFlatComboDelegate renders any
+	// disabled row header-style, not just row 0) purely to keep this long list
+	// scannable — group membership carries no meaning of its own. The enum values
+	// on the right (McFilterPanel::SortOrder / McFileListModel::SortOrder) are
+	// persisted in AppSettings("library/sortOrder") and duplicated as plain ints
+	// in DatabaseManager::allFilesPaged, so they must never change or shift —
+	// only this visual insertion order and the group labels are free to change.
+	m_sortCombo->addItem(tr("Sorting"),          QVariant());          // header
+	m_sortCombo->addItem(tr("Name"),             SortByName);
+	m_sortCombo->addItem(tr("Date Added"),       QVariant());          // group header
+	m_sortCombo->addItem(tr("Newest first"),     SortByNewest);
+	m_sortCombo->addItem(tr("Oldest first"),     SortByOldest);
+	m_sortCombo->addItem(tr("File"),             QVariant());          // group header
+	m_sortCombo->addItem(tr("Largest"),          SortByLargest);
+	m_sortCombo->addItem(tr("Last scanned"),     SortByLastScanned);
+	m_sortCombo->addItem(tr("Rating"),           QVariant());          // group header
+	m_sortCombo->addItem(tr("Rating ↓"),         SortByRatingHigh);
+	m_sortCombo->addItem(tr("Rating ↑"),         SortByRatingLow);
+	m_sortCombo->addItem(tr("Release"),          QVariant());          // group header
+	m_sortCombo->addItem(tr("Year ↓"),           SortByYearNewest);
+	m_sortCombo->addItem(tr("Year ↑"),           SortByYearOldest);
+	m_sortCombo->addItem(tr("Premiere date"),    SortByPremiereNewest);
+	m_sortCombo->addItem(tr("Digital release"),  SortByDigitalNewest);
+	m_sortCombo->addItem(tr("Physical release"), SortByPhysicalNewest);
+	m_sortCombo->addItem(tr("View"),             QVariant());          // group header
+	m_sortCombo->addItem(tr("Group by Movie"),   GroupedByEdition);
+	if (auto* m = qobject_cast<QStandardItemModel*>(m_sortCombo->model())) {
+		for (int i = 0; i < m->rowCount(); ++i)
+			if (!m_sortCombo->itemData(i).isValid())
+				if (auto* item = m->item(i))
+					item->setEnabled(false);
+	}
+	m_sortCombo->setCurrentIndex(1);   // "Name" — must stay the row right after the top header
 	lay->addWidget(m_sortCombo);
 
 	connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
 	        this, [this](int i) {
-		if (i <= 0) return;
-		const int order = m_sortCombo->currentData().toInt();
+		// Header/group-label rows carry no itemData (QVariant()) — skip them
+		// instead of assuming index 0 is the only such row, now that the list
+		// has several group headers interspersed with real entries.
+		const QVariant data = m_sortCombo->itemData(i);
+		if (!data.isValid()) return;
+		const int order = data.toInt();
 		if (order != GroupedByEdition && m_redundantChip->isChecked())
 			m_redundantChip->setChecked(false);   // also fires redundantOnlyFilterChanged(false)
 		m_groupModeActive = (order == GroupedByEdition);

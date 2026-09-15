@@ -98,6 +98,10 @@ public:
 		IsGroupCardRole    = Qt::UserRole + 20,  // bool — true when this row is a mega card
 		GroupIsRedundantRole = Qt::UserRole + 21, // bool — 2+ members share the same edition
 		JobStatusRole      = Qt::UserRole + 22,  // QString — non-terminal job status (proposed/queued/running), empty if none
+		// TMDB release_dates (US region), ISO YYYY-MM-DD, empty = unknown. Movies only.
+		PremiereDateRole   = Qt::UserRole + 23,
+		DigitalDateRole    = Qt::UserRole + 24,
+		PhysicalDateRole   = Qt::UserRole + 25,
 	};
 
 	// Must stay in sync with McFilterPanel::QuickFilter
@@ -122,6 +126,13 @@ public:
 		SortByRatingLow  = 5,
 		SortByLastScanned= 6,
 		GroupedByEdition = 7,   // one "mega card" per movie (tmdb group) — see rebuildGroupedEntries()
+		SortByYearNewest = 8,   // release year from TMDB, newest first (0/unknown last)
+		SortByYearOldest = 9,   // release year from TMDB, oldest first (0/unknown last)
+		// TMDB release_dates (US region) — see PremiereDateRole/DigitalDateRole/
+		// PhysicalDateRole. Movies only; TV files have no date and sort last.
+		SortByPremiereNewest = 10,
+		SortByDigitalNewest  = 11,
+		SortByPhysicalNewest = 12,
 	};
 
 	explicit McFileListModel(QObject* parent = nullptr);
@@ -137,7 +148,10 @@ public:
 	              const QSet<qint64>& filesWithJobs,
 	              const QHash<qint64, double>& ratings = {},
 	              const QHash<qint64, QString>& fanartPaths = {},
-	              const QHash<qint64, int>& tmdbIds = {});
+	              const QHash<qint64, int>& tmdbIds = {},
+	              const QHash<qint64, QString>& premiereDates = {},
+	              const QHash<qint64, QString>& digitalDates = {},
+	              const QHash<qint64, QString>& physicalDates = {});
 	void applyFileUpdate(const Mc::FileRecord& file, const QList<Mc::StreamRecord>& streams);
 	void removeEntry(qint64 fileId);
 	void refreshJobFilter();        // re-query proposed jobs and reapply filter
@@ -185,6 +199,8 @@ public slots:
 	void onTmdbIdSaved(qint64 fileId, int tmdbId);
 	void onTmdbDataReady(qint64 fileId, const QString& title, int year, double rating,
 	                     const QString& mediaType = {});
+	void onReleaseDatesReady(qint64 fileId, const QString& premiereDate,
+	                         const QString& digitalDate, const QString& physicalDate);
 	void toggleForcedRemoval(qint64 fileId, int streamIndex);
 
 private:
@@ -223,6 +239,10 @@ private:
 	QHash<qint64, QString>    m_imdbIds;         // fileId → IMDb ID
 	QHash<qint64, int>        m_tmdbIds;         // fileId → TMDB numeric id
 	QHash<qint64, double>     m_ratings;         // fileId → TMDB vote_average (absent = no rating)
+	// TMDB release_dates (US region), ISO YYYY-MM-DD; absent = unknown. Movies only.
+	QHash<qint64, QString>    m_premiereDates;
+	QHash<qint64, QString>    m_digitalDates;
+	QHash<qint64, QString>    m_physicalDates;
 	QHash<qint64, int>        m_folderCounts;    // fileId → count of files sharing the same parent folder
 	QHash<qint64, QSet<int>>  m_forcedRemovals;  // fileId → stream indices user wants removed
 	QString                   m_filterText;

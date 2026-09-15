@@ -69,6 +69,12 @@ public:
 		SortByRatingLow  = 5,
 		SortByLastScanned= 6,
 		GroupedByEdition = 7,   // "Group by Movie" — mega cards, one per movie
+		SortByYearNewest = 8,   // release year from TMDB, newest first (0/unknown last)
+		SortByYearOldest = 9,   // release year from TMDB, oldest first (0/unknown last)
+		// TMDB release_dates (US region). Movies only; TV files have no date and sort last.
+		SortByPremiereNewest = 10,
+		SortByDigitalNewest  = 11,
+		SortByPhysicalNewest = 12,
 	};
 
 signals:
