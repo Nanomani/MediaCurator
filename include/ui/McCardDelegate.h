@@ -175,6 +175,16 @@ public:
 	qint64 hitTestGroupMember(const QPoint& pos, const QRect& itemRect,
 	                          const QModelIndex& index) const;
 
+	// Mega card only: like hitTestBadgeStream, but scoped to whichever member's
+	// header+badge block (see layoutGroupCard) pos falls within — each member
+	// stacks its own real track-badge rows below its own header, so a plain
+	// hitTestBadgeStream (which only knows the single-file layout: one header,
+	// one badge block right below it) mismatches every member after the first.
+	// fileId is -1 (streamIndex meaningless) if pos isn't over any member's badges.
+	struct GroupMemberBadgeHit { qint64 fileId = -1; int streamIndex = -1; };
+	GroupMemberBadgeHit hitTestGroupMemberBadgeStream(const QPoint& pos, const QRect& itemRect,
+	                                                  const QModelIndex& index) const;
+
 private:
 	// Normalised card data populated from whichever model is in use.
 	struct CardData {
@@ -314,6 +324,13 @@ private:
 	bool hitTestInteractive(const QPoint& pos, const QRect& itemRect,
 	                        bool hasImdb = false, bool hasTmdb = false,
 	                        const QModelIndex& index = {}, bool hasNfo = false) const;
+
+	// Shared core of hitTestBadgeStream/hitTestGroupMemberBadgeStream: finds the
+	// track badge under pos within one header's worth of badge rows, given the
+	// content rect and the y where that badge area starts (single-file cards and
+	// each mega-card member compute that start differently — see call sites).
+	int hitTestBadgeStreamAt(const QPoint& pos, const QRect& content, int startY,
+	                         const QList<StreamRecord>& tracks, const QFontMetrics& fm) const;
 
 	// Left inset of the content area from the card's left edge — kPosterW + kPosterGap
 	// when TMDB is configured, otherwise just enough for a checkbox column (job queue)

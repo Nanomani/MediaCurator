@@ -1143,7 +1143,9 @@ void McJobListModel::setStreamFlag(const QModelIndex& index, int streamIndex,
 	if (!index.isValid() || index.row() >= m_entries.size()) return;
 
 	JobCardEntry& filt = m_entries[index.row()];
-	if (filt.job.status != "proposed" && filt.job.status != "queued") return;
+	// "done" is allowed too — flag edits apply via mkvpropedit against the
+	// finished output file directly, no remux needed (unlike track removal).
+	if (filt.job.status != "proposed" && filt.job.status != "queued" && filt.job.status != "done") return;
 
 	const qint64 jobId  = filt.job.jobId;
 	const qint64 fileId = filt.job.fileId;
@@ -1186,7 +1188,9 @@ void McJobListModel::setStreamLanguage(const QModelIndex& index, int streamIndex
 	if (!index.isValid() || index.row() >= m_entries.size()) return;
 
 	JobCardEntry& filt = m_entries[index.row()];
-	if (filt.job.status != "proposed" && filt.job.status != "queued") return;
+	// "done" is allowed too — language edits apply via mkvpropedit against the
+	// finished output file directly, no remux needed (unlike track removal).
+	if (filt.job.status != "proposed" && filt.job.status != "queued" && filt.job.status != "done") return;
 
 	const qint64 jobId  = filt.job.jobId;
 	const qint64 fileId = filt.job.fileId;
@@ -1257,8 +1261,7 @@ void McJobListModel::revertStreamLanguage(qint64 fileId, int streamIndex, const 
 	}
 }
 
-void McJobListModel::updateExternalStreamInfo(qint64 fileId, int streamIndex,
-                                               const QString& language, const QString& externalPath)
+void McJobListModel::updateExternalStreamInfo(qint64 fileId, int streamIndex, const QString& language, const QString& externalPath)
 {
 	auto apply = [&](StreamRecord& s) {
 		if (s.streamIndex != streamIndex) return;
@@ -1270,12 +1273,17 @@ void McJobListModel::updateExternalStreamInfo(qint64 fileId, int streamIndex,
 		for (auto& s : ae.allStreams)  apply(s);
 		for (auto& s : ae.keptStreams) apply(s);
 	}
-	for (int i = 0; i < m_entries.size(); ++i) {
-		if (m_entries[i].job.fileId != fileId) continue;
-		for (auto& s : m_entries[i].allStreams)  apply(s);
-		for (auto& s : m_entries[i].keptStreams) apply(s);
-		const QModelIndex idx = index(i);
-		emit dataChanged(idx, idx, { AllStreamsRole, KeptStreamsRole });
+	for (int i = 0, size = m_entries.size(); i < size; i++)
+	{
+		if (m_entries[i].job.fileId == fileId)
+		{
+			for (auto& s : m_entries[i].allStreams)
+				apply(s);
+			for (auto& s : m_entries[i].keptStreams)
+				apply(s);
+			const QModelIndex idx = index(i);
+			emit dataChanged(idx, idx, { AllStreamsRole, KeptStreamsRole });
+		}
 	}
 }
 

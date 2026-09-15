@@ -832,7 +832,12 @@ void McJobPanel::setupUi()
 		// hitTestBadgeStream and visualRect() both work in viewport coordinates.
 		const QPoint vpPos = m_listView->viewport()->mapFrom(m_listView, pos);
 		int hitStreamIdx = -1;
-		const bool isEditable = (status == QLatin1String("proposed") || status == QLatin1String("queued"));
+		// "done" is included too: flag/language edits (default, forced, original,
+		// language) apply via mkvpropedit directly against the finished output
+		// file and never need a remux — only track removal does. See
+		// TrackFlagService::apply and McJobListModel::setStreamFlag/setStreamLanguage.
+		const bool isEditable = (status == QLatin1String("proposed") || status == QLatin1String("queued")
+		                          || status == QLatin1String("done"));
 		if (isEditable) {
 			if (auto* del = qobject_cast<McCardDelegate*>(m_listView->itemDelegate())) {
 				const auto streams = idx.data(McJobListModel::AllStreamsRole).value<QList<StreamRecord>>();

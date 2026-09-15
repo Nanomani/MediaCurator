@@ -1106,23 +1106,41 @@ void McMainWindow::setupUi()
 	        this, [this](const QPoint& pos) {
 		const QModelIndex idx = m_listView->indexAt(pos);
 		if (!idx.isValid()) return;
-		const FileRecord file = idx.data(McFileListModel::FileRole).value<FileRecord>();
+		FileRecord file = idx.data(McFileListModel::FileRole).value<FileRecord>();
 
 		// Detect whether the right-click landed on a specific track badge — same
 		// pattern as McJobPanel's badge context menu (customContextMenuRequested
 		// gives pos in list-view widget coordinates; hitTestBadgeStream and
 		// visualRect() both work in viewport coordinates).
+		// Mega cards (Group by Movie) stack one header+badge block per member
+		// (see McCardDelegate::layoutGroupCard), each with its own stream list —
+		// hitTestBadgeStream only knows the single-file layout (one header, one
+		// badge block right below it), so it needs the dedicated per-member
+		// hitTestGroupMemberBadgeStream instead, which also tells us which
+		// member (not just which stream) was clicked so the actions below apply
+		// to the right file.
 		{
 			const QPoint vpPos = m_listView->viewport()->mapFrom(m_listView, pos);
 			QList<StreamRecord> streams;
 			int hitStreamIdx = -1;
 			if (auto* del = qobject_cast<McCardDelegate*>(m_listView->itemDelegate())) {
-				streams = idx.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
-				const bool hasImdb = !idx.data(McFileListModel::ImdbRole).toString().isEmpty();
-				const bool hasTmdb = idx.data(McFileListModel::TmdbRole).toInt() > 0;
-				hitStreamIdx = del->hitTestBadgeStream(vpPos, m_listView->visualRect(idx),
-				                                        streams, m_listView->font(),
-				                                        hasImdb, hasTmdb);
+				if (idx.data(McFileListModel::IsGroupCardRole).toBool()) {
+					const auto hit = del->hitTestGroupMemberBadgeStream(vpPos, m_listView->visualRect(idx), idx);
+					if (hit.fileId >= 0) {
+						if (const auto memberFile = DatabaseManager::instance().fileById(hit.fileId)) {
+							file          = *memberFile;
+							streams       = DatabaseManager::instance().streamsForFile(hit.fileId);
+							hitStreamIdx  = hit.streamIndex;
+						}
+					}
+				} else {
+					streams = idx.data(McFileListModel::StreamsRole).value<QList<StreamRecord>>();
+					const bool hasImdb = !idx.data(McFileListModel::ImdbRole).toString().isEmpty();
+					const bool hasTmdb = idx.data(McFileListModel::TmdbRole).toInt() > 0;
+					hitStreamIdx = del->hitTestBadgeStream(vpPos, m_listView->visualRect(idx),
+					                                        streams, m_listView->font(),
+					                                        hasImdb, hasTmdb);
+				}
 			}
 			const StreamRecord* hitStream = nullptr;
 			for (const StreamRecord& s : streams) {

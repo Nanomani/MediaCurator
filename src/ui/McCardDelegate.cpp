@@ -1194,23 +1194,11 @@ bool McCardDelegate::hitTestInteractive(const QPoint& pos, const QRect& itemRect
 	return false;
 }
 
-int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
-                                        const QList<StreamRecord>& tracks,
-                                        const QFont& baseFont,
-                                        bool hasImdb,
-                                        bool hasTmdb) const
+int McCardDelegate::hitTestBadgeStreamAt(const QPoint& pos, const QRect& content, int startY,
+                                          const QList<StreamRecord>& tracks, const QFontMetrics& fm) const
 {
-	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
-	QFont badgeFont = baseFont;
-	badgeFont.setPointSizeF(baseFont.pointSizeF() * 0.82);
-	const QFontMetrics fm(badgeFont);
-	// Full width — IMDb/TMDB live in the title row now, not here (hasImdb/hasTmdb
-	// kept in the signature for API compatibility with existing callers).
-	Q_UNUSED(hasImdb);
-	Q_UNUSED(hasTmdb);
 	const int badgeAreaW = content.width();
-
-	int y = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
+	int y = startY;
 
 	for (const QString& type : {QStringLiteral("video"), QStringLiteral("audio"), QStringLiteral("subtitle")}) {
 		QList<StreamRecord> group;
@@ -1250,6 +1238,25 @@ int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
 	return -1;
 }
 
+int McCardDelegate::hitTestBadgeStream(const QPoint& pos, const QRect& itemRect,
+                                        const QList<StreamRecord>& tracks,
+                                        const QFont& baseFont,
+                                        bool hasImdb,
+                                        bool hasTmdb) const
+{
+	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
+	QFont badgeFont = baseFont;
+	badgeFont.setPointSizeF(baseFont.pointSizeF() * 0.82);
+	const QFontMetrics fm(badgeFont);
+	// Full width — IMDb/TMDB live in the title row now, not here (hasImdb/hasTmdb
+	// kept in the signature for API compatibility with existing callers).
+	Q_UNUSED(hasImdb);
+	Q_UNUSED(hasTmdb);
+
+	const int startY = content.top() + kFolderH + kFolderGap + kHeaderH + kSepGap;
+	return hitTestBadgeStreamAt(pos, content, startY, tracks, fm);
+}
+
 qint64 McCardDelegate::hitTestGroupMember(const QPoint& pos, const QRect& itemRect,
                                            const QModelIndex& index) const
 {
@@ -1266,6 +1273,41 @@ qint64 McCardDelegate::hitTestGroupMember(const QPoint& pos, const QRect& itemRe
 			return members[i].fileId;
 	}
 	return -1;
+}
+
+McCardDelegate::GroupMemberBadgeHit McCardDelegate::hitTestGroupMemberBadgeStream(
+    const QPoint& pos, const QRect& itemRect, const QModelIndex& index) const
+{
+	GroupMemberBadgeHit result;
+	if (!index.data(McFileListModel::IsGroupCardRole).toBool()) return result;
+
+	const QRect content = itemRect.adjusted(leftContentInset(), kPadV, -kPadH, -kPadBottom);
+	const auto  members = index.data(McFileListModel::GroupMembersRole).value<GroupMemberList>();
+	QFont badgeFont = m_view ? m_view->font() : QFont{};
+	badgeFont.setPointSizeF(badgeFont.pointSizeF() * 0.82);
+	const QFontMetrics fm(badgeFont);
+	const auto layout = layoutGroupCard(content, members, fm);
+
+	for (int i = 0; i < layout.members.size() && i < members.size(); ++i) {
+		const auto& ml = layout.members.at(i);
+		const QRect blockRect(ml.headerRect.left(), ml.headerRect.top(), ml.headerRect.width(), ml.blockH);
+		if (!blockRect.contains(pos)) continue;
+
+		// Matches paint()'s own "by = row.bottom() + kSepGap" for this member's
+		// first badge row (see the isGroupCard branch below) — this member's own
+		// track badges, not the card-shared streams the caller might otherwise
+		// pass in.
+		const int startY = ml.headerRect.bottom() + kSepGap;
+		const auto& gm = members.at(i);
+		QList<StreamRecord> tracks = gm.videoStreams;
+		tracks += gm.audioStreams;
+		tracks += gm.subtitleStreams;
+
+		result.fileId      = gm.fileId;
+		result.streamIndex = hitTestBadgeStreamAt(pos, content, startY, tracks, fm);
+		return result;
+	}
+	return result;
 }
 
 bool McCardDelegate::editorEvent(QEvent*, QAbstractItemModel*, const QStyleOptionViewItem&, const QModelIndex&)
@@ -1757,39 +1799,36 @@ QSize McCardDelegate::sizeHint(const QStyleOptionViewItem& option,
 	// IMDb/TMDB live in the title row now (not here), so track badges get the full width.
 	const int badgeAreaW = totalContentW;
 
+	// Job Queue's CardData only ever pre-populates videoStreams (fetchData derives
+	// it from allStreams for the 4K badge) — audioStreams/subtitleStreams are always
+	// empty there. paint()'s drawGroup() falls back to building each TYPE from
+	// allStreams independently whenever that type's pre-group is empty; mirror that
+	// exactly here, per type, rather than an all-or-nothing switch — a card-wide
+	// "any pre-group non-empty → trust all three" check (the previous approach)
+	// left Job Queue cards' audio/subtitle rows silently uncounted (videoStreams
+	// alone made the check pass), undersizing the row so paint()'s real audio/
+	// subtitle badges spilled past what the list view allocated for it.
 	int totalRows = 0;
-	auto groups = { &d.videoStreams, &d.audioStreams, &d.subtitleStreams };
-	bool usedPreGroups = false;
-	for (const auto* groupPtr : groups) {
-		if (!groupPtr->isEmpty()) usedPreGroups = true;
-	}
-	if (!usedPreGroups && !d.allStreams.isEmpty()) {
-		// Fallback for job queue or legacy entries: build from allStreams
-		for (const QString& type : {QStringLiteral("video"), QStringLiteral("audio"), QStringLiteral("subtitle")}) {
-			QList<StreamRecord> group;
+	const QList<StreamRecord>* preGroups[3] = { &d.videoStreams, &d.audioStreams, &d.subtitleStreams };
+	const QString               types[3]    = { QStringLiteral("video"), QStringLiteral("audio"),
+	                                            QStringLiteral("subtitle") };
+	for (int t = 0; t < 3; ++t) {
+		QList<StreamRecord> fallback;
+		const QList<StreamRecord>* groupPtr = preGroups[t];
+		if (groupPtr->isEmpty() && !d.allStreams.isEmpty()) {
 			for (const auto& s : d.allStreams)
-				if (s.codecType == type) group << s;
-			if (group.isEmpty()) continue;
-			int rows = 1, x = 0;
-			for (const auto& s : group) {
-				const int bW = badgeWidthFor(s, s.isOriginal, fm);
-				if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
-				x += bW + kBadgeGap;
-			}
-			totalRows += rows;
+				if (s.codecType == types[t]) fallback << s;
+			groupPtr = &fallback;
 		}
-	} else {
-		for (const auto* groupPtr : groups) {
-			const auto& group = *groupPtr;
-			if (group.isEmpty()) continue;
-			int rows = 1, x = 0;
-			for (const auto& s : group) {
-				const int bW = badgeWidthFor(s, s.isOriginal, fm);
-				if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
-				x += bW + kBadgeGap;
-			}
-			totalRows += rows;
+		const auto& group = *groupPtr;
+		if (group.isEmpty()) continue;
+		int rows = 1, x = 0;
+		for (const auto& s : group) {
+			const int bW = badgeWidthFor(s, s.isOriginal, fm);
+			if (x > 0 && x + bW > badgeAreaW) { rows++; x = 0; }
+			x += bW + kBadgeGap;
 		}
+		totalRows += rows;
 	}
 
 	// Each group advances y by rows*(kBadgeH+kRowGap), including a trailing kRowGap.
